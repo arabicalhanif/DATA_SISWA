@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "UserConfig": {
+      "title": "User Database Configurations",
+      "description": "User specific configurations, such as linked Spreadsheet ID and preferences.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The Google User UUID" },
+        "userEmail": { "type": "string", "description": "The Google User Email address" },
+        "spreadsheetId": { "type": "string", "description": "The linked Google Spreadsheet ID for this school data" },
+        "isAutoSyncEnabled": { "type": "boolean", "description": "Whether real-time background auto sync is enabled" },
+        "updatedAt": { "type": "string", "description": "The last time config was updated" }
+      },
+      "required": ["userId", "spreadsheetId"]
+    },
+    "AcademicState": {
+      "title": "Full Academic Database State",
+      "description": "Stores all entities (classes, students, attendance, schedules) in a single document for cross-device cloud sync redundancy",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The Google User UUID" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" },
+        "schemaVersion": { "type": "number" },
+        "payload": { "type": "object", "description": "Serialized school data maps/arrays" }
+      },
+      "required": ["userId", "payload"]
+    }
+  },
+  "firestore": {
+    "/userConfigs/{userId}": {
+      "schema": "UserConfig",
+      "description": "Stores user database configurations linked to their account for cross-device synchronization"
+    },
+    "/academicData/{userId}": {
+      "schema": "AcademicState",
+      "description": "The backup and sync repository for all school dataset elements under the user's Google Account database"
+    }
+  }
+}

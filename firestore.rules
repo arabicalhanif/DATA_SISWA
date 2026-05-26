@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Catch-all default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive helper definitions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUserConfig(data) {
+      return data.keys().hasAll(['userId', 'spreadsheetId'])
+        && data.keys().size() <= 5
+        && data.userId is string
+        && data.userId.size() <= 128
+        && data.spreadsheetId is string
+        && data.spreadsheetId.size() <= 128;
+    }
+
+    match /userConfigs/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidUserConfig(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+
+    match /academicData/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+  }
+}

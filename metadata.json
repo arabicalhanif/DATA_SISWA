@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: Remix:Arabic alhanif ",
+  "description": "Sistem informasi penilaian siswa digital untuk memantau nilai akademik siswa secara real-time, lengkap dengan grafik interaktif dan ekspor laporan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
