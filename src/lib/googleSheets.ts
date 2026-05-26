@@ -372,6 +372,20 @@ export async function exportLocalDataToGoogleSheets(
     agendas?: TeacherAgenda[];
   }
 ) {
+  // Simple cell-quota protector to avoid overflow issues on Google Sheets.
+  // Full, lossless Base64 payload is fully maintained & updated within Firestore backup.
+  const safeText = (val: string): string => {
+    if (!val) return "";
+    if (val.length > 40000) {
+      if (val.includes("|||")) {
+        const parts = val.split("|||");
+        return `${parts[0]}|||[Batas Sel Google Sheets Terlampaui - Berkas Utuh Berhasil Disimpan di Cloud Firestore]`;
+      }
+      return "[Berkas Terlalu Besar - Silakan Tinjau di Halaman Aplikasi]";
+    }
+    return val;
+  };
+
   // First ensure all sheets are created
   await ensureSpreadsheetTabs(accessToken);
   
@@ -463,7 +477,7 @@ export async function exportLocalDataToGoogleSheets(
           t.dueDate,
           t.kelasId,
           t.teacherCode,
-          t.lampiranFile || ""
+          safeText(t.lampiranFile || "")
         ]);
       case "10. Absensi Siswa":
         return (data.absenSiswa || []).map(a => [
@@ -504,7 +518,7 @@ export async function exportLocalDataToGoogleSheets(
           p.tugasId,
           p.siswaId,
           p.tanggalKumpul,
-          p.linkFileAtauFoto,
+          safeText(p.linkFileAtauFoto || ""),
           p.catatanSiswa || "",
           p.statusVerifikasi,
           p.nilaiTugas !== undefined ? p.nilaiTugas : "",

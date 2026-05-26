@@ -1372,24 +1372,24 @@ export default function App() {
           const finalData = data || cloudState;
 
           if (finalData) {
-            if (finalData.kelas && finalData.kelas.length > 0) setKelas(finalData.kelas);
-            if (finalData.mapel && finalData.mapel.length > 0) setMapel(finalData.mapel);
-            if (finalData.siswa && finalData.siswa.length > 0) setSiswa(finalData.siswa);
-            if (finalData.kategori && finalData.kategori.length > 0) setKategori(finalData.kategori);
+            if (finalData.kelas) setKelas(finalData.kelas);
+            if (finalData.mapel) setMapel(finalData.mapel);
+            if (finalData.siswa) setSiswa(finalData.siswa);
+            if (finalData.kategori) setKategori(finalData.kategori);
             if (finalData.penilaian) setPenilaian(finalData.penilaian);
             
             // Backup other local entities to state
             const loadedGuru = finalData.guru || finalData.guruCodes;
-            if (loadedGuru && loadedGuru.length > 0) setGuruCodes(loadedGuru);
-            if (finalData.jadwal && finalData.jadwal.length > 0) setJadwal(finalData.jadwal);
-            if (finalData.tugas && finalData.tugas.length > 0) setTugas(finalData.tugas);
-            if (finalData.absenSiswa && finalData.absenSiswa.length > 0) setAbsenSiswa(finalData.absenSiswa);
-            if (finalData.absenGuru && finalData.absenGuru.length > 0) setAbsenGuru(finalData.absenGuru);
-            if (finalData.announcements && finalData.announcements.length > 0) setAnnouncements(finalData.announcements);
-            if (finalData.ujianPraktek && finalData.ujianPraktek.length > 0) setUjianPraktek(finalData.ujianPraktek);
-            if (finalData.pengumpulanTugas && finalData.pengumpulanTugas.length > 0) setPengumpulanTugas(finalData.pengumpulanTugas);
-            if (finalData.guruPiket && finalData.guruPiket.length > 0) setGuruPiket(finalData.guruPiket);
-            if (finalData.agendas && finalData.agendas.length > 0) setAgendas(finalData.agendas);
+            if (loadedGuru) setGuruCodes(loadedGuru);
+            if (finalData.jadwal) setJadwal(finalData.jadwal);
+            if (finalData.tugas) setTugas(finalData.tugas);
+            if (finalData.absenSiswa) setAbsenSiswa(finalData.absenSiswa);
+            if (finalData.absenGuru) setAbsenGuru(finalData.absenGuru);
+            if (finalData.announcements) setAnnouncements(finalData.announcements);
+            if (finalData.ujianPraktek) setUjianPraktek(finalData.ujianPraktek);
+            if (finalData.pengumpulanTugas) setPengumpulanTugas(finalData.pengumpulanTugas);
+            if (finalData.guruPiket) setGuruPiket(finalData.guruPiket);
+            if (finalData.agendas) setAgendas(finalData.agendas);
 
             setGsLaunchSyncSuccess(true);
             setHasLoadedCloudData(true);

@@ -189,7 +189,7 @@ export default function HomeworkPortal({
       dueDate: dueDate,
       kelasId: targetKelas,
       teacherCode: currentGuruCode || "USTADZ-01",
-      lampiranFile: attachedFile ? (attachedFile.type === "image" ? attachedFile.dataUrl : attachedFile.name) : undefined,
+      lampiranFile: attachedFile ? `${attachedFile.name}|||${attachedFile.dataUrl}` : undefined,
       lampiranFileType: attachedFile ? attachedFile.type : undefined,
       eduLink: eduLink.trim() || undefined,
       eduLinkLabel: eduLinkLabel.trim() || undefined,
@@ -409,80 +409,106 @@ export default function HomeworkPortal({
                       <p className="text-xs text-slate-600 font-medium whitespace-pre-line leading-relaxed">{t.deskripsiSoal}</p>
                     </div>
 
-                    {t.lampiranFile && (
-                      <div className="pt-1.5">
-                        {t.lampiranFileType === "image" ? (
-                          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/50 p-2 max-w-sm">
-                            <img 
-                              src={t.lampiranFile} 
-                              className="max-h-52 w-full object-cover rounded-xl" 
-                              referrerPolicy="no-referrer" 
-                              alt="Lampiran Tugas" 
-                            />
-                            <span className="text-[10px] text-slate-400 font-semibold mt-1.5 block px-1 truncate">
-                              🖼️ Gambar Lampiran Soal
-                            </span>
-                          </div>
-                        ) : t.lampiranFileType === "pdf" ? (
-                          <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-rose-50/40 border border-rose-100 max-w-md">
-                            <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-750 font-bold font-mono text-xs flex items-center justify-center shrink-0">
-                              PDF
+                    {t.lampiranFile && (() => {
+                      const fileParts = t.lampiranFile.split("|||");
+                      const isCustomUploaded = fileParts.length > 1;
+                      const fileName = isCustomUploaded ? fileParts[0] : t.lampiranFile;
+                      const fileContent = isCustomUploaded ? fileParts[1] : t.lampiranFile;
+
+                      const handleDownload = () => {
+                        if (fileContent && fileContent.startsWith("data:")) {
+                          const link = document.createElement("a");
+                          link.href = fileContent;
+                          link.download = fileName;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          showNotification(`Berhasil mengunduh dokumen: ${fileName}`, "success");
+                        } else {
+                          showNotification(`Simulasi mengunduh berkas: ${fileName}`, "neutral");
+                        }
+                      };
+
+                      return (
+                        <div className="pt-1.5">
+                          {t.lampiranFileType === "image" ? (
+                            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/50 p-2 max-w-sm">
+                              <img 
+                                src={fileContent} 
+                                className="max-h-52 w-full object-cover rounded-xl" 
+                                referrerPolicy="no-referrer" 
+                                alt={fileName} 
+                              />
+                              <div className="flex items-center justify-between mt-1.5 px-1 min-w-0">
+                                <span className="text-[10px] text-slate-400 font-semibold truncate max-w-[150px]">
+                                  🖼️ {fileName}
+                                </span>
+                                {isCustomUploaded && (
+                                  <button
+                                    type="button"
+                                    onClick={handleDownload}
+                                    className="text-[9px] font-black uppercase text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded transition-colors"
+                                  >
+                                    Unduh
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-bold text-slate-700 truncate">{t.lampiranFile}</p>
-                              <p className="text-[10px] text-rose-600 font-medium">Dokumen Tugas Pembelajaran PDF</p>
+                          ) : t.lampiranFileType === "pdf" ? (
+                            <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-rose-50/40 border border-rose-100 max-w-md">
+                              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-750 font-bold font-mono text-xs flex items-center justify-center shrink-0">
+                                PDF
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-bold text-slate-700 truncate">{fileName}</p>
+                                <p className="text-[10px] text-rose-600 font-medium">Dokumen Tugas Pembelajaran PDF</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleDownload}
+                                className="px-3 py-1 bg-white border border-rose-200 text-rose-700 text-[10px] font-bold rounded-lg hover:bg-rose-50"
+                              >
+                                Unduh PDF
+                              </button>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                showNotification(`Simulasi mengunduh file PDF: ${t.lampiranFile}`);
-                              }}
-                              className="px-3 py-1 bg-white border border-rose-200 text-rose-700 text-[10px] font-bold rounded-lg hover:bg-rose-50"
-                            >
-                              Unduh PDF
-                            </button>
-                          </div>
-                        ) : t.lampiranFileType === "word" ? (
-                          <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-blue-50/40 border border-blue-100 max-w-md">
-                            <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-750 font-bold font-mono text-xs flex items-center justify-center shrink-0">
-                              DOCX
+                          ) : t.lampiranFileType === "word" ? (
+                            <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-blue-50/40 border border-blue-100 max-w-md">
+                              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-750 font-bold font-mono text-xs flex items-center justify-center shrink-0">
+                                DOCX
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-bold text-slate-700 truncate">{fileName}</p>
+                                <p className="text-[10px] text-blue-600 font-medium">Bahan ajar / Lembar Soal Word</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleDownload}
+                                className="px-3 py-1 bg-white border border-blue-200 text-blue-700 text-[10px] font-bold rounded-lg hover:bg-blue-50"
+                              >
+                                Unduh Word
+                              </button>
                             </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-bold text-slate-700 truncate">{t.lampiranFile}</p>
-                              <p className="text-[10px] text-blue-600 font-medium">Bahan ajar / Lembar Soal Word</p>
+                          ) : (
+                            <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-slate-50 border border-slate-205 max-w-md">
+                              <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-700 font-bold font-mono text-xs flex items-center justify-center shrink shrink-0">
+                                FILE
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-bold text-slate-750 truncate">{fileName}</p>
+                                <p className="text-[10px] text-slate-450 font-semibold font-mono">Berkas Tugas Lainnya</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleDownload}
+                                className="px-3 py-1 bg-white border border-slate-200 text-slate-700 text-[10px] font-bold rounded-lg hover:bg-slate-50"
+                              >
+                                Unduh File
+                              </button>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                showNotification(`Simulasi mengunduh file Word: ${t.lampiranFile}`);
-                              }}
-                              className="px-3 py-1 bg-white border border-blue-200 text-blue-700 text-[10px] font-bold rounded-lg hover:bg-blue-50"
-                            >
-                              Unduh Word
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-slate-50 border border-slate-205 max-w-md">
-                            <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-700 font-bold font-mono text-xs flex items-center justify-center shrink shrink-0">
-                              FILE
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-bold text-slate-750 truncate">{t.lampiranFile}</p>
-                              <p className="text-[10px] text-slate-450 font-semibold font-mono">Berkas Tugas Lainnya</p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                showNotification(`Simulasi mengunduh file pendukung: ${t.lampiranFile}`);
-                              }}
-                              className="px-3 py-1 bg-white border border-slate-200 text-slate-700 text-[10px] font-bold rounded-lg hover:bg-slate-50"
-                            >
-                              Unduh File
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {t.eduLink && (
                       <div className="pt-2">
