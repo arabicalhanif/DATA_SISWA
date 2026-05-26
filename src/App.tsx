@@ -1245,6 +1245,7 @@ export default function App() {
   const [isGSheetsSyncingOnLaunch, setIsGSheetsSyncingOnLaunch] = useState(false);
   const [gsLaunchSyncError, setGsLaunchSyncError] = useState<string | null>(null);
   const [gsLaunchSyncSuccess, setGsLaunchSyncSuccess] = useState<boolean>(false);
+  const [hasLoadedCloudData, setHasLoadedCloudData] = useState<boolean>(false);
 
   // Real-time Cloud Auto-Sync engine states
   const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState(() => localStorage.getItem("PSD_AUTO_SYNC_ENABLED") !== "false");
@@ -1391,6 +1392,7 @@ export default function App() {
             if (finalData.agendas && finalData.agendas.length > 0) setAgendas(finalData.agendas);
 
             setGsLaunchSyncSuccess(true);
+            setHasLoadedCloudData(true);
           } else {
             console.log("Pengguna baru terdeteksi dengan state kosong, menyimpan data lokal saat ini ke Cloud.");
             await syncAcademicDataToFirestore(user.uid, {
@@ -1399,6 +1401,7 @@ export default function App() {
               announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
             });
             setGsLaunchSyncSuccess(true);
+            setHasLoadedCloudData(true);
           }
         } catch (err: any) {
           console.error("Auto-sync dengan Google Sheets Gagal:", err);
@@ -1411,6 +1414,7 @@ export default function App() {
         setGoogleUser(null);
         setGoogleAccessToken(null);
         setIsGSheetsSyncingOnLaunch(false);
+        setHasLoadedCloudData(false);
       }
     );
     return () => unsubscribe();
@@ -1556,24 +1560,25 @@ export default function App() {
     localStorage.setItem("PSD_AUTO_SYNC_ENABLED", String(isAutoSyncEnabled));
   }, [isAutoSyncEnabled]);
 
-  // Keep a ref to verify if initial data import on launch has completed
-  const hasFinishedInitialPull = useRef(false);
+  // Keep a state to verify if initial data import on launch has completed
+  const [hasFinishedInitialPull, setHasFinishedInitialPull] = useState(false);
 
   useEffect(() => {
     if (!isGSheetsSyncingOnLaunch) {
       const t = setTimeout(() => {
-        hasFinishedInitialPull.current = true;
+        setHasFinishedInitialPull(true);
       }, 2000);
       return () => clearTimeout(t);
     } else {
-      hasFinishedInitialPull.current = false;
+      setHasFinishedInitialPull(false);
     }
   }, [isGSheetsSyncingOnLaunch]);
 
   // Real-time automatic background synchronization to Google Sheets and Cloud Firestore
   useEffect(() => {
-    if (!hasFinishedInitialPull.current) return;
+    if (!hasFinishedInitialPull) return;
     if (!googleUser) return;
+    if (!hasLoadedCloudData) return; // STRICT GUARD: prevents overwriting existing data with empty states on device switch!
     if (!isAutoSyncEnabled) return;
 
     setCloudSyncStatus("saving");
@@ -1673,7 +1678,9 @@ export default function App() {
     agendas,
     googleUser,
     googleAccessToken,
-    isAutoSyncEnabled
+    isAutoSyncEnabled,
+    hasFinishedInitialPull,
+    hasLoadedCloudData
   ]);
 
   // State to handle automatic timed-dismissal of welcome banners
