@@ -37,8 +37,21 @@ import {
   extractSpreadsheetId,
   auth,
   syncUserSpreadsheetId,
-  createGoogleSpreadsheet
+  createGoogleSpreadsheet,
+  syncAcademicDataToFirestore,
+  fetchAcademicDataFromFirestore
 } from "../lib/googleSheets";
+import {
+  syncAcademicDataToSupabase,
+  fetchAcademicDataFromSupabase,
+  syncUserSpreadsheetIdToSupabase,
+  fetchUserSpreadsheetIdFromSupabase,
+  isSupabaseConfigured,
+  getSupabaseUrl,
+  getSupabaseAnonKey,
+  saveLocalSupabaseCredentials,
+  clearLocalSupabaseCredentials
+} from "../lib/supabase";
 
 interface ExcelIntegrationProps {
   kelas: Kelas[];
@@ -59,6 +72,10 @@ interface ExcelIntegrationProps {
   userRole?: "admin" | "guru" | "wali";
   isAutoSyncEnabled?: boolean;
   setIsAutoSyncEnabled?: (val: boolean) => void;
+  isDecoupledFromSheets?: boolean;
+  setIsDecoupledFromSheets?: (val: boolean) => void;
+  dbProvider?: string;
+  setDbProvider?: (val: string) => void;
   onImportAllData: (data: {
     kelas: Kelas[];
     mapel: MataPelajaran[];
@@ -97,6 +114,10 @@ export default function ExcelIntegration({
   userRole = "guru",
   isAutoSyncEnabled = true,
   setIsAutoSyncEnabled,
+  isDecoupledFromSheets = true,
+  setIsDecoupledFromSheets,
+  dbProvider = "firestore",
+  setDbProvider,
   onImportAllData
 }: ExcelIntegrationProps) {
   const [isDragging, setIsDragging] = useState(false);
@@ -137,6 +158,11 @@ export default function ExcelIntegration({
   ]);
   const [backupStage, setBackupStage] = useState<number | null>(null);
   const [isManualBackingUp, setIsManualBackingUp] = useState(false);
+
+  // Supabase connection states
+  const [supabaseUrl, setSupabaseUrlInput] = useState(() => getSupabaseUrl());
+  const [supabaseAnonKey, setSupabaseAnonKeyInput] = useState(() => getSupabaseAnonKey());
+  const [isSupabaseSaved, setIsSupabaseSaved] = useState(false);
 
   // Initialize Auth State Listener on Mount
   useEffect(() => {
@@ -274,6 +300,212 @@ export default function ExcelIntegration({
     }
   };
 
+  const handlePushToFirestore = async () => {
+    if (userRole !== "admin" && userRole !== "guru") {
+      setSheetError("Akses Ditolak: Hanya Guru atau Administrator yang berwenang untuk mencadangkan data.");
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setSheetError("Silakan sambungkan Akun Anda terlebih dahulu!");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Apakah Anda yakin ingin menimpa cadangan di Cloud Firestore dengan data lokal saat ini? Data lama di cloud akan diperbarui sepenuhnya."
+    );
+    if (!confirmed) return;
+
+    setIsSyncingOut(true);
+    setSheetError(null);
+    setSheetStatus("Mengunggah data sekolah langsung ke Google Cloud Firestore aman...");
+    try {
+      await syncAcademicDataToFirestore(currentUser.uid, {
+        kelas,
+        mapel,
+        siswa,
+        kategori,
+        penilaian,
+        guru: guruCodes,
+        jadwal,
+        tugas,
+        absenSiswa,
+        absenGuru,
+        announcements,
+        ujianPraktek,
+        pengumpulanTugas,
+        guruPiket,
+        agendas
+      });
+      setSheetStatus("Cadangan Berhasil! Data Anda kini dicadangkan dengan aman di Google Cloud Firestore.");
+    } catch (err: any) {
+      console.error(err);
+      setSheetError(err.message || "Gagal mencadangkan data ke Cloud Firestore.");
+    } finally {
+      setIsSyncingOut(false);
+    }
+  };
+
+  const handlePullFromFirestore = async () => {
+    if (userRole !== "admin" && userRole !== "guru") {
+      setSheetError("Akses Ditolak: Hanya Guru atau Administrator yang berwenang untuk memulihkan data.");
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setSheetError("Silakan sambungkan Akun Anda terlebih dahulu!");
+      return;
+    }
+    setIsSyncingIn(true);
+    setSheetError(null);
+    setSheetStatus("Mengambil cadangan data akademis dari Google Cloud Firestore...");
+    try {
+      const data = await fetchAcademicDataFromFirestore(currentUser.uid);
+      if (!data) {
+        throw new Error("Tidak ditemukan database di Cloud Firestore untuk akun Anda.");
+      }
+      
+      let count = 0;
+      if (data.penilaian) {
+        data.penilaian.forEach((p: any) => {
+          count += (p.grades || []).length;
+        });
+      }
+
+      setParsedData({
+        kelas: data.kelas || [],
+        mapel: data.mapel || [],
+        siswa: data.siswa || [],
+        kategori: data.kategori || [],
+        penilaian: data.penilaian || [],
+        guru: data.guru || [],
+        jadwal: data.jadwal || [],
+        tugas: data.tugas || [],
+        absenSiswa: data.absenSiswa || [],
+        absenGuru: data.absenGuru || [],
+        announcements: data.announcements || [],
+        ujianPraktek: data.ujianPraktek || [],
+        pengumpulanTugas: data.pengumpulanTugas || [],
+        guruPiket: data.guruPiket || [],
+        agendas: data.agendas || [],
+        totalGradesCount: count
+      });
+      setImportMode("replace");
+      setSheetStatus("Cadangan data berhasil dimuat dari Cloud Firestore! Klik 'Simpan Semua Data ke Sistem' di panel bawah untuk menerapkan.");
+    } catch (err: any) {
+      console.error(err);
+      setSheetError(err.message || "Gagal memulihkan data dari Cloud Firestore.");
+    } finally {
+      setIsSyncingIn(false);
+    }
+  };
+
+  const handlePushToSupabase = async () => {
+    if (userRole !== "admin" && userRole !== "guru") {
+      setSheetError("Akses Ditolak: Hanya Guru atau Administrator yang berwenang untuk mencadangkan data.");
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setSheetError("Silakan sambungkan Akun Anda terlebih dahulu!");
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      setSheetError("Gagal: Hubungkan akun Supabase Anda terlebih dahulu dengan mengisi kredensial URL dan Anon Key.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Apakah Anda yakin ingin menimpa cadangan di Supabase PostgreSQL dengan data lokal saat ini? Data lama di tabel academic_data akan diperbarui sepenuhnya."
+    );
+    if (!confirmed) return;
+
+    setIsSyncingOut(true);
+    setSheetError(null);
+    setSheetStatus("Mengunggah data sekolah langsung ke database PostgreSQL Supabase aman...");
+    try {
+      await syncAcademicDataToSupabase(currentUser.uid, {
+        kelas,
+        mapel,
+        siswa,
+        kategori,
+        penilaian,
+        guru: guruCodes,
+        jadwal,
+        tugas,
+        absenSiswa,
+        absenGuru,
+        announcements,
+        ujianPraktek,
+        pengumpulanTugas,
+        guruPiket,
+        agendas
+      });
+      setSheetStatus("Cadangan Berhasil! Data Anda kini dicadangkan dengan aman ke database cloud Supabase.");
+    } catch (err: any) {
+      console.error(err);
+      setSheetError(err.message || "Gagal mencadangkan data ke Supabase.");
+    } finally {
+      setIsSyncingOut(false);
+    }
+  };
+
+  const handlePullFromSupabase = async () => {
+    if (userRole !== "admin" && userRole !== "guru") {
+      setSheetError("Akses Ditolak: Hanya Guru atau Administrator yang berwenang untuk memulihkan data.");
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setSheetError("Silakan sambungkan Akun Anda terlebih dahulu!");
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      setSheetError("Gagal: Hubungkan akun Supabase Anda terlebih dahulu dengan mengisi kredensial URL dan Anon Key.");
+      return;
+    }
+    setIsSyncingIn(true);
+    setSheetError(null);
+    setSheetStatus("Mengambil cadangan data akademis dari Supabase PostgreSQL...");
+    try {
+      const data = await fetchAcademicDataFromSupabase(currentUser.uid);
+      if (!data) {
+        throw new Error("Tidak ditemukan database di Supabase untuk akun Anda. Silakan cadangkan data lokal Anda terlebih dahulu.");
+      }
+      
+      let count = 0;
+      if (data.penilaian) {
+        data.penilaian.forEach((p: any) => {
+          count += (p.grades || []).length;
+        });
+      }
+
+      setParsedData({
+        kelas: data.kelas || [],
+        mapel: data.mapel || [],
+        siswa: data.siswa || [],
+        kategori: data.kategori || [],
+        penilaian: data.penilaian || [],
+        guru: data.guru || [],
+        jadwal: data.jadwal || [],
+        tugas: data.tugas || [],
+        absenSiswa: data.absenSiswa || [],
+        absenGuru: data.absenGuru || [],
+        announcements: data.announcements || [],
+        ujianPraktek: data.ujianPraktek || [],
+        pengumpulanTugas: data.pengumpulanTugas || [],
+        guruPiket: data.guruPiket || [],
+        agendas: data.agendas || [],
+        totalGradesCount: count
+      });
+      setImportMode("replace");
+      setSheetStatus("Cadangan data berhasil dimuat dari Supabase! Klik 'Simpan Semua Data ke Sistem' di panel bawah untuk menerapkan.");
+    } catch (err: any) {
+      console.error(err);
+      setSheetError(err.message || "Gagal memulihkan data dari Supabase.");
+    } finally {
+      setIsSyncingIn(false);
+    }
+  };
+
   const [isCreatingSheet, setIsCreatingSheet] = useState(false);
 
   const handleCreateNewPersonalSpreadsheet = async () => {
@@ -297,7 +529,11 @@ export default function ExcelIntegration({
 
         const currentUser = auth.currentUser;
         if (currentUser) {
-          await syncUserSpreadsheetId(currentUser.uid, currentUser.email || "", newId);
+          if (dbProvider === "supabase" && isSupabaseConfigured()) {
+            await syncUserSpreadsheetIdToSupabase(currentUser.uid, currentUser.email || "", newId);
+          } else {
+            await syncUserSpreadsheetId(currentUser.uid, currentUser.email || "", newId);
+          }
         }
 
         // Instantly push existing state to the new spreadsheet to initialize it perfectly
@@ -854,7 +1090,7 @@ export default function ExcelIntegration({
             }`}
           >
             <Cloud className="w-5 h-5 animate-pulse" />
-            Google Sheets Sync (Cloud)
+            {isDecoupledFromSheets ? "Autosync Cloud (Firestore Murni)" : "Google Sheets Sync (Cloud)"}
             <span className="bg-emerald-100 text-emerald-700 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">Live</span>
           </button>
         )}
@@ -874,96 +1110,389 @@ export default function ExcelIntegration({
 
       {activeSubTab === "sheets" && (userRole === "admin" || userRole === "guru") && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fadeIn">
-          {/* Left: General Info & Target spreadsheet Link */}
-          <div className="lg:col-span-12 xl:col-span-5 space-y-6">
-            <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-xs space-y-5">
-              <div className="flex items-start gap-4">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#8BA888] flex items-center justify-center shrink-0">
-                  <Cloud className="w-5 h-5" />
-                </div>
+          {/* Decoupling / Connection Switcher - Full Width Span */}
+          <div className="lg:col-span-12">
+            <div className="bg-gradient-to-r from-[#F0F4EF] to-white p-6 rounded-3xl border-2 border-[#8BA888]/20 shadow-xs space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h3 className="font-bold text-slate-800 text-lg">Target Spreadsheet</h3>
-                  <p className="text-xs text-slate-550 mt-1 leading-relaxed">
-                    Sistem ini terhubung langsung ke Google Sheets. Masukkan tautan atau Spreadsheet ID kustom untuk memigrasikan database.
+                  <h3 className="font-extrabold text-slate-800 text-lg flex items-center gap-2">
+                    <Database className="w-5 h-5 text-[#577354]" />
+                    Mode Media Penyimpanan Cloud
+                  </h3>
+                  <p className="text-xs text-slate-505 mt-1 max-w-2xl leading-relaxed">
+                    Tentukan bagaimana SiswaDigital menyinkronkan data akademis secara aman. Anda dapat menggunakan database cloud Firestore tersentralisasi secara murni atau menyinkronkannya juga ke tabel spreadsheet online Google Sheets.
                   </p>
                 </div>
-              </div>
-
-              {/* URL card with interactive link editor */}
-              <div className="bg-[#F7F8F3] p-4.5 rounded-2xl border border-emerald-100 space-y-3.5">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center gap-1.5">
-                    <Link2 className="w-4 h-4 text-[#8BA888]" />
-                    Pilih Tautan Google Sheets:
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs font-semibold text-slate-500">Otorisasi Aturan:</span>
+                  <span className="px-2.5 py-1 text-[10px] bg-[#8BA888]/10 text-[#577354] rounded-full font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#8BA888] animate-ping" />
+                    Firestore Izinkan Semua/Terkoneksi
                   </span>
-                  <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md">Admin Only</span>
                 </div>
-                
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    value={spreadsheetInput}
-                    onChange={(e) => {
-                      setSpreadsheetInput(e.target.value);
-                      setIsSavedId(false);
-                    }}
-                    placeholder="Masukkan url link lengkap atau Spreadsheet ID..."
-                    className="w-full px-3 py-2 bg-white text-slate-700 border border-slate-250 rounded-xl text-xs font-sans outline-hidden focus:border-[#8BA888] focus:ring-1 focus:ring-[#8BA888] transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const cleanId = extractSpreadsheetId(spreadsheetInput);
-                      setSpreadsheetId(cleanId);
-                      setIsSavedId(true);
-                      
-                      const currentUser = auth.currentUser;
-                      if (currentUser) {
-                        await syncUserSpreadsheetId(currentUser.uid, currentUser.email || "", cleanId);
-                        setSheetStatus(`Tautan Google Sheet disimpan dan diselaraskan ke Cloud!`);
-                      } else {
-                        setSheetStatus(`Tautan Google Sheet kustom berhasil disimpan secara lokal!`);
-                      }
-                      setTimeout(() => setIsSavedId(false), 3000);
-                    }}
-                    className={`w-full py-2 rounded-xl text-xs font-bold transition-all duration-250 cursor-pointer ${
-                      isSavedId 
-                        ? "bg-emerald-550 text-white" 
-                        : "bg-[#8BA888] hover:bg-[#7b9878] text-white"
-                    }`}
-                  >
-                    {isSavedId ? "✓ Tautan Disimpan!" : "Terapkan Tautan Google Sheet"}
-                  </button>
-                </div>
-
-                <div className="bg-white p-3 rounded-xl border border-slate-100 font-mono text-[9px] break-all text-slate-500 relative">
-                  ID Terhubung: <span className="font-bold text-slate-800 select-all">{SPREADSHEET_ID}</span>
-                </div>
-
-                <a
-                  href={`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit#gid=0`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-[#577354] border border-[#D6E0D2] rounded-xl text-xs font-semibold transition-all hover:scale-[1.01]"
-                >
-                  <span>Buka Spreadsheet Aktif</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
               </div>
 
-              {/* Synchronization Rules */}
-              <div className="text-xs text-slate-500 leading-relaxed space-y-2 pt-1 border-t border-slate-100">
-                <p className="font-bold text-slate-700 flex items-center gap-1.5">
-                  <HelpCircle className="w-4 h-4 text-slate-450" /> Aturan Sinkronisasi Terpusat:
-                </p>
-                <ul className="list-disc pl-4 space-y-1">
-                  <li>Proses <strong>Sinkronisasi</strong> murni berbasis HTTPS aman langsung ke Google API.</li>
-                  <li>Data dipilah komprehensif ke dalam 15 lembar tab sesuai struktur data sekolah SDIT Al Hanif.</li>
-                  <li>Mengirim data ("Push") akan memperbarui seluruh data lama di Google Sheets Anda.</li>
-                  <li>SiswaDigital tidak menyimpan sandi Google akun Anda (Sistem ditangani Popup resmi Google OAuth2).</li>
-                </ul>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Card 1: Cloud Firestore Murni */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDecoupledFromSheets?.(true);
+                    setDbProvider?.("firestore");
+                  }}
+                  className={`p-5 rounded-2xl text-left border transition-all duration-300 relative flex flex-col justify-between h-full hover:shadow-md cursor-pointer ${
+                    (isDecoupledFromSheets && dbProvider === "firestore")
+                      ? "bg-white border-[#8BA888] ring-2 ring-[#8BA888]/10 shadow-xs"
+                      : "bg-white/50 border-slate-200 hover:bg-white"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className={`p-2.5 rounded-xl ${(isDecoupledFromSheets && dbProvider === "firestore") ? "bg-[#8BA888]/10 text-[#577354]" : "bg-slate-100 text-slate-505"}`}>
+                        <Cloud className="w-5 h-5" />
+                      </div>
+                      {(isDecoupledFromSheets && dbProvider === "firestore") && (
+                        <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
+                          Direkomendasikan (Aktif)
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Cloud Firestore Murni</h4>
+                      <p className="text-[11px] text-slate-505 mt-1.5 leading-relaxed font-sans">
+                        Database sekolah disimpan langsung ke Cloud Firestore. Sangat cepat, instan, bebas dari segala kendala izin (Permission Denied) ataupun Google Drive penuh. Sempurna untuk kelancaran mengajar guru.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full text-xs font-bold text-slate-600">
+                    <span>Opsi Koneksi: Firestore Murni</span>
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center ${(isDecoupledFromSheets && dbProvider === "firestore") ? "bg-[#8BA888] text-white" : "border-2 border-slate-300 bg-white"}`}>
+                      {(isDecoupledFromSheets && dbProvider === "firestore") && "✓"}
+                    </span>
+                  </div>
+                </button>
+
+                {/* Card 2: Supabase PostgreSQL */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDecoupledFromSheets?.(true);
+                    setDbProvider?.("supabase");
+                  }}
+                  className={`p-5 rounded-2xl text-left border transition-all duration-300 relative flex flex-col justify-between h-full hover:shadow-md cursor-pointer ${
+                    (isDecoupledFromSheets && dbProvider === "supabase")
+                      ? "bg-white border-[#8BA888] ring-2 ring-[#8BA888]/10 shadow-xs"
+                      : "bg-white/50 border-slate-200 hover:bg-white"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className={`p-2.5 rounded-xl ${(isDecoupledFromSheets && dbProvider === "supabase") ? "bg-[#8BA888]/10 text-[#577354]" : "bg-slate-100 text-slate-505"}`}>
+                        <Database className="w-5 h-5" />
+                      </div>
+                      {(isDecoupledFromSheets && dbProvider === "supabase") && (
+                        <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
+                          Supabase Aktif
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Supabase PostgreSQL</h4>
+                      <p className="text-[11px] text-slate-505 mt-1.5 leading-relaxed font-sans">
+                        Penyimpanan cloud dialihkan ke database cloud PostgreSQL Supabase Anda. Meningkatkan kedaulatan data penuh, keamanan enkripsi andal, dan andal tanpa sheets.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full text-xs font-bold text-slate-600">
+                    <span>Opsi Koneksi: Supabase Cloud</span>
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center ${(isDecoupledFromSheets && dbProvider === "supabase") ? "bg-[#8BA888] text-white" : "border-2 border-slate-300 bg-white"}`}>
+                      {(isDecoupledFromSheets && dbProvider === "supabase") && "✓"}
+                    </span>
+                  </div>
+                </button>
+
+                {/* Card 3: Google Sheets */}
+                <button
+                  type="button"
+                  onClick={() => setIsDecoupledFromSheets?.(false)}
+                  className={`p-5 rounded-2xl text-left border transition-all duration-300 relative flex flex-col justify-between h-full hover:shadow-md cursor-pointer ${
+                    !isDecoupledFromSheets
+                      ? "bg-white border-[#8BA888] ring-2 ring-[#8BA888]/10 shadow-xs"
+                      : "bg-white/50 border-slate-200 hover:bg-white"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className={`p-2.5 rounded-xl ${!isDecoupledFromSheets ? "bg-[#8BA888]/10 text-[#577354]" : "bg-slate-100 text-slate-505"}`}>
+                        <FileSpreadsheet className="w-5 h-5" />
+                      </div>
+                      {!isDecoupledFromSheets && (
+                        <span className="bg-blue-100 text-blue-800 text-[9px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
+                          Terhubung Spreadsheet
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Google Sheets & Excel Sync</h4>
+                      <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed font-sans">
+                        Data disinkronkan secara simultan ke Google Sheets online Anda. Memungkinkan analisis manual langsung lewat file spreadsheet cloud. Diperlukan ijin akses sunting.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full text-xs font-bold text-slate-600">
+                    <span>Opsi Koneksi: Spreadsheet Link</span>
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center ${!isDecoupledFromSheets ? "bg-[#8BA888] text-white" : "border-2 border-slate-300 bg-white"}`}>
+                      {!isDecoupledFromSheets && "✓"}
+                    </span>
+                  </div>
+                </button>
               </div>
             </div>
+          </div>
+
+          {/* Left: General Info & Target spreadsheet Link */}
+          <div className="lg:col-span-12 xl:col-span-5 space-y-6">
+            {isDecoupledFromSheets && dbProvider === "supabase" ? (
+              <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-xs space-y-5 animate-fadeIn">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#8BA888] flex items-center justify-center shrink-0">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Supabase PostgreSQL</h3>
+                    <p className="text-xs text-slate-550 mt-1 leading-relaxed animate-pulse">
+                      Konfigurasikan database relational PostgreSQL kustom Anda untuk kedaulatan data akademis sekolah SDIT Al Hanif sepenuhnya.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-1">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Supabase URL Proyek:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="https://your-project.supabase.co"
+                      value={supabaseUrl}
+                      onChange={(e) => {
+                        setSupabaseUrlInput(e.target.value);
+                        setIsSupabaseSaved(false);
+                      }}
+                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 focus:border-[#8BA888] focus:bg-white text-xs rounded-xl focus:outline-none transition-all duration-250 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Supabase Anon Public API Key:
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      value={supabaseAnonKey}
+                      onChange={(e) => {
+                        setSupabaseAnonKeyInput(e.target.value);
+                        setIsSupabaseSaved(false);
+                      }}
+                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 focus:border-[#8BA888] focus:bg-white text-xs rounded-xl focus:outline-none transition-all duration-250 font-mono"
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!supabaseUrl || !supabaseAnonKey) {
+                          setSheetError("Harap isi URL dan Anon API Key untuk menyambungkan ke Supabase!");
+                          return;
+                        }
+                        saveLocalSupabaseCredentials(supabaseUrl, supabaseAnonKey);
+                        setIsSupabaseSaved(true);
+                        setSheetError(null);
+                        setSheetStatus("Kredensial Supabase kustom berhasil diterapkan & disimpan lokal!");
+                        setTimeout(() => setIsSupabaseSaved(false), 3000);
+                      }}
+                      className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all duration-250 cursor-pointer text-center text-white ${
+                        isSupabaseSaved 
+                          ? "bg-emerald-600" 
+                          : "bg-[#8BA888] hover:bg-[#7b9878]"
+                      }`}
+                    >
+                      {isSupabaseSaved ? "✓ Kredensial Disimpan!" : "Terapkan Kredensial"}
+                    </button>
+
+                    {(getSupabaseUrl() || getSupabaseAnonKey()) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearLocalSupabaseCredentials();
+                          setSupabaseUrlInput("");
+                          setSupabaseAnonKeyInput("");
+                          setSheetStatus("Kredensial Supabase kustom dihapus. Sistem akan menggunakan nilai fallback dari file lingkungan.");
+                          setIsSupabaseSaved(false);
+                        }}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 font-bold text-xs text-slate-600 rounded-xl cursor-pointer"
+                        title="Hapus Kredensial Kustom"
+                      >
+                        Hapus
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-[#FAF9F5] p-4 rounded-xl border border-amber-200/60 leading-relaxed text-slate-600 text-[11px] space-y-1">
+                  <span className="font-extrabold text-slate-700 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                    Panduan Tabel Database Supabase:
+                  </span>
+                  <p className="text-[10px] text-slate-500">
+                    Supabase membutuhkan 2 tabel relasional di schema public Anda. Silakan jalankan kueri SQL berikut di Sql Editor Supabase Console Anda:
+                  </p>
+                  <pre className="bg-slate-900 text-slate-300 text-[8.5px] p-2 rounded-lg font-mono overflow-auto select-all max-h-32">
+{`-- Tabel Data Akademik Utama
+CREATE TABLE IF NOT EXISTS public.academic_data (
+  user_id text PRIMARY KEY,
+  updated_at timestamptz DEFAULT now(),
+  payload jsonb
+);
+
+-- Tabel Konfigurasi User Spreadsheet
+CREATE TABLE IF NOT EXISTS public.user_configs (
+  user_id text PRIMARY KEY,
+  email text,
+  spreadsheet_id text,
+  updated_at timestamptz DEFAULT now()
+);`}
+                  </pre>
+                </div>
+              </div>
+            ) : isDecoupledFromSheets ? (
+              <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-xs space-y-5 animate-fadeIn">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#8BA888] flex items-center justify-center shrink-0">
+                    <Cloud className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Cloud Firestore</h3>
+                    <p className="text-xs text-slate-550 mt-1 leading-relaxed">
+                      Sistem terhubung langsung ke Google Cloud database tersentralisasi yang bebas repot, tanpa spreadsheet lambat.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  <div className="text-xs text-[#577354]">
+                    <span className="font-bold">Sambungan Aktif:</span> Firestore siap melayani penyimpanan realtime.
+                  </div>
+                </div>
+
+                <div className="text-xs text-slate-500 leading-relaxed space-y-2 pt-1 border-t border-slate-100">
+                  <p className="font-bold text-slate-700 flex items-center gap-1.5">
+                    <HelpCircle className="w-4 h-4 text-slate-450" /> Aturan Cloud Firestore:
+                  </p>
+                  <ul className="list-disc pl-4 space-y-1 text-slate-500">
+                    <li>Sinkronisasi berjalan otomatis di latar belakang setiap ada perubahan data akademis.</li>
+                    <li>SiswaDigital menjamin enkripsi aman transfer data sensitif siswa Anda ke database cloud.</li>
+                    <li>Lepas sepenuhnya dari Sheets, memberikan kinerja instan, sinkronisasi lintas device tanpa popup persetujuan yang mengganggu.</li>
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-xs space-y-5">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#8BA888] flex items-center justify-center shrink-0">
+                    <Cloud className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Target Spreadsheet</h3>
+                    <p className="text-xs text-slate-550 mt-1 leading-relaxed">
+                      Sistem ini terhubung langsung ke Google Sheets. Masukkan tautan atau Spreadsheet ID kustom untuk memigrasikan database.
+                    </p>
+                  </div>
+                </div>
+
+                {/* URL card with interactive link editor */}
+                <div className="bg-[#F7F8F3] p-4.5 rounded-2xl border border-emerald-100 space-y-3.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <Link2 className="w-4 h-4 text-[#8BA888]" />
+                      Pilih Tautan Google Sheets:
+                    </span>
+                    <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md">Admin Only</span>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={spreadsheetInput}
+                      onChange={(e) => {
+                        setSpreadsheetInput(e.target.value);
+                        setIsSavedId(false);
+                      }}
+                      placeholder="Masukkan url link lengkap atau Spreadsheet ID..."
+                      className="w-full px-3 py-2 bg-white text-slate-700 border border-slate-200 rounded-xl text-xs font-sans outline-hidden focus:border-[#8BA888] focus:ring-1 focus:ring-[#8BA888] transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const cleanId = extractSpreadsheetId(spreadsheetInput);
+                        setSpreadsheetId(cleanId);
+                        setIsSavedId(true);
+                        
+                        const currentUser = auth.currentUser;
+                        if (currentUser) {
+                          if (dbProvider === "supabase" && isSupabaseConfigured()) {
+                            await syncUserSpreadsheetIdToSupabase(currentUser.uid, currentUser.email || "", cleanId);
+                          } else {
+                            await syncUserSpreadsheetId(currentUser.uid, currentUser.email || "", cleanId);
+                          }
+                          setSheetStatus(`Tautan Google Sheet disimpan dan diselaraskan ke Cloud!`);
+                        } else {
+                          setSheetStatus(`Tautan Google Sheet kustom berhasil disimpan secara lokal!`);
+                        }
+                        setTimeout(() => setIsSavedId(false), 3000);
+                      }}
+                      className={`w-full py-2 rounded-xl text-xs font-bold transition-all duration-250 cursor-pointer ${
+                        isSavedId 
+                          ? "bg-emerald-550 text-white" 
+                          : "bg-[#8BA888] hover:bg-[#7b9878] text-white"
+                      }`}
+                    >
+                      {isSavedId ? "✓ Tautan Disimpan!" : "Terapkan Tautan Google Sheet"}
+                    </button>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-slate-100 font-mono text-[9px] break-all text-slate-500 relative">
+                    ID Terhubung: <span className="font-bold text-slate-800 select-all">{SPREADSHEET_ID}</span>
+                  </div>
+
+                  <a
+                    href={`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit#gid=0`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-[#577354] border border-[#D6E0D2] rounded-xl text-xs font-semibold transition-all hover:scale-[1.01]"
+                  >
+                    <span>Buka Spreadsheet Aktif</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+
+                {/* Synchronization Rules */}
+                <div className="text-xs text-slate-500 leading-relaxed space-y-2 pt-1 border-t border-slate-100">
+                  <p className="font-bold text-slate-700 flex items-center gap-1.5">
+                    <HelpCircle className="w-4 h-4 text-slate-450" /> Aturan Sinkronisasi Terpusat:
+                  </p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Proses <strong>Sinkronisasi</strong> murni berbasis HTTPS aman langsung ke Google API.</li>
+                    <li>Data dipilah komprehensif ke dalam 15 lembar tab sesuai struktur data sekolah SDIT Al Hanif.</li>
+                    <li>Mengirim data ("Push") akan memperbarui seluruh data lama di Google Sheets Anda.</li>
+                    <li>SiswaDigital tidak menyimpan sandi Google akun Anda (Sistem ditangani Popup resmi Google OAuth2).</li>
+                  </ul>
+                </div>
+              </div>
+            )}
 
             {/* Integration Status Tracker inside Sheets */}
             <div className="bg-[#2D3A3A] p-6 rounded-3xl text-white space-y-4 shadow-xl">
@@ -1057,8 +1586,12 @@ export default function ExcelIntegration({
             {/* Interactive Console Card */}
             <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
               <div className="border-b border-slate-100 pb-4">
-                <h4 className="font-black text-slate-800 text-lg">Gerbang Konektivitas Google</h4>
-                <p className="text-xs text-slate-500 mt-1">Status sambungan dan autentikasi ke Spreadsheet Cloud.</p>
+                <h4 className="font-black text-slate-800 text-lg">
+                  {isDecoupledFromSheets ? "Gerbang Konektivitas Cloud Firestore" : "Gerbang Konektivitas Google"}
+                </h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  {isDecoupledFromSheets ? "Status akun cloud dan sinkronisasi database Al-Hanif." : "Status sambungan dan autentikasi ke Spreadsheet Cloud."}
+                </p>
               </div>
 
               {!googleUser ? (
@@ -1131,7 +1664,7 @@ export default function ExcelIntegration({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* Exporter / Push */}
                     <button
-                      onClick={handlePushToSheets}
+                      onClick={isDecoupledFromSheets ? (dbProvider === "supabase" ? handlePushToSupabase : handlePushToFirestore) : handlePushToSheets}
                       disabled={isSyncingIn || isSyncingOut}
                       type="button"
                       className="flex flex-col items-center justify-center p-6 bg-emerald-50/50 border border-emerald-100/75 hover:border-emerald-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
@@ -1144,14 +1677,18 @@ export default function ExcelIntegration({
                         )}
                       </div>
                       <div>
-                        <div className="font-bold text-slate-800 text-sm">Kirim ke Google Sheets</div>
-                        <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">Mencatat data lokal Anda ke lembaran Google Sheets.</div>
+                        <div className="font-bold text-slate-800 text-sm">
+                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Cadangkan ke Supabase" : "Cadangkan ke Firestore") : "Kirim ke Google Sheets"}
+                        </div>
+                        <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
+                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Mengamankan seluruh data sekolah ke PostgreSQL Supabase kustom." : "Mengamankan seluruh data sekolah ke database cloud instan.") : "Mencatat data lokal Anda ke lembaran Google Sheets."}
+                        </div>
                       </div>
                     </button>
 
                     {/* Importer / Pull */}
                     <button
-                      onClick={handlePullFromSheets}
+                      onClick={isDecoupledFromSheets ? (dbProvider === "supabase" ? handlePullFromSupabase : handlePullFromFirestore) : handlePullFromSheets}
                       disabled={isSyncingIn || isSyncingOut}
                       type="button"
                       className="flex flex-col items-center justify-center p-6 bg-blue-50/50 border border-blue-100 hover:border-blue-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
@@ -1164,8 +1701,12 @@ export default function ExcelIntegration({
                         )}
                       </div>
                       <div>
-                        <div className="font-bold text-slate-800 text-sm">Tarik dari Google Sheets</div>
-                        <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">Impor data dari spreadsheet cloud ke sistem Anda.</div>
+                        <div className="font-bold text-slate-800 text-sm">
+                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Muat dari Supabase" : "Muat dari Firestore") : "Tarik dari Google Sheets"}
+                        </div>
+                        <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
+                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Memulihkan data sekolah dari database PostgreSQL Supabase Anda." : "Memulihkan data sekolah dari cadangan awan Firestore Anda.") : "Impor data dari spreadsheet cloud ke sistem Anda."}
+                        </div>
                       </div>
                     </button>
                   </div>

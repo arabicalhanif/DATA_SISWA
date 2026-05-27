@@ -44,6 +44,13 @@ import {
   emailAndPasswordSignIn,
   emailAndPasswordSignUp
 } from "./lib/googleSheets";
+import {
+  syncAcademicDataToSupabase,
+  fetchAcademicDataFromSupabase,
+  syncUserSpreadsheetIdToSupabase,
+  fetchUserSpreadsheetIdFromSupabase,
+  isSupabaseConfigured
+} from "./lib/supabase";
 import HomeworkPortal from "./components/HomeworkPortal";
 import { 
   INITIAL_KELAS, 
@@ -1247,6 +1254,23 @@ export default function App() {
   const [gsLaunchSyncSuccess, setGsLaunchSyncSuccess] = useState<boolean>(false);
   const [hasLoadedCloudData, setHasLoadedCloudData] = useState<boolean>(false);
 
+  // Decoupled from Google Sheets mode (defaulting to true)
+  const [isDecoupledFromSheets, setIsDecoupledFromSheets] = useState(() => {
+    return localStorage.getItem("PSD_DECOUPLE_FROM_SHEETS") !== "false";
+  });
+
+  const [dbProvider, setDbProvider] = useState(() => {
+    return localStorage.getItem("PSD_DB_PROVIDER") || "firestore";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("PSD_DECOUPLE_FROM_SHEETS", String(isDecoupledFromSheets));
+  }, [isDecoupledFromSheets]);
+
+  useEffect(() => {
+    localStorage.setItem("PSD_DB_PROVIDER", dbProvider);
+  }, [dbProvider]);
+
   // Real-time Cloud Auto-Sync engine states
   const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState(() => localStorage.getItem("PSD_AUTO_SYNC_ENABLED") !== "false");
   const [cloudSyncStatus, setCloudSyncStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -1309,62 +1333,87 @@ export default function App() {
           }
         }
 
-        setIsGSheetsSyncingOnLaunch(true);
+        setIsGSheetsSyncingOnLaunch(!isDecoupledFromSheets);
         setGsLaunchSyncError(null);
         try {
-          // 1. Fetch custom Spreadsheet ID from Firestore for cross-device sync!
-          const cloudSheetId = await fetchUserSpreadsheetId(user.uid);
-          if (cloudSheetId) {
-            setSpreadsheetId(cloudSheetId);
-          } else if (SPREADSHEET_ID) {
-            // Backup the current local spreadsheet id to cloud if not already synced
-            await syncUserSpreadsheetId(user.uid, user.email || "", SPREADSHEET_ID);
-          }
-
-          // 2. Fetch Academic State backup from Google Cloud Firestore
-          const cloudState = await fetchAcademicDataFromFirestore(user.uid);
-
-          // 3. Auto-pull/sync upon launch/refresh from Google Sheets
+          let cloudState = null;
           let data = null;
-          try {
-            data = await importDataFromGoogleSheets(token);
-          } catch (sheetsErr: any) {
-            console.warn("Gagal mengimpor data secara langsung dari Google Sheets, beralih ke cadangan Firestore...", sheetsErr);
-            const errMsg = String(sheetsErr.message || "");
-            if (errMsg.includes("403") || errMsg.includes("Gagal") || !cloudSheetId) {
-              console.log("Mendeteksi galat akses atau pengguna baru. Membuat spreadsheet pribadi berjalan otomatis...");
-              try {
-                const autoSheetId = await createGoogleSpreadsheet(token, `SiswaDigital_SDIT_AlHanif_Database`);
-                if (autoSheetId) {
-                  setSpreadsheetId(autoSheetId);
-                  await syncUserSpreadsheetId(user.uid, user.email || "", autoSheetId);
-                  // Push current cloudState or default empty structure to the newly created spreadsheet
-                  const fallbackData = cloudState || {
-                    kelas, mapel, siswa, kategori, penilaian,
-                    guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
-                    announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
-                  };
-                  await exportLocalDataToGoogleSheets(token, {
-                    kelas: fallbackData.kelas || [],
-                    mapel: fallbackData.mapel || [],
-                    siswa: fallbackData.siswa || [],
-                    kategori: fallbackData.kategori || [],
-                    penilaian: fallbackData.penilaian || [],
-                    guru: fallbackData.guru || fallbackData.guruCodes || [],
-                    jadwal: fallbackData.jadwal || [],
-                    tugas: fallbackData.tugas || [],
-                    absenSiswa: fallbackData.absenSiswa || [],
-                    absenGuru: fallbackData.absenGuru || [],
-                    announcements: fallbackData.announcements || [],
-                    ujianPraktek: fallbackData.ujianPraktek || [],
-                    pengumpulanTugas: fallbackData.pengumpulanTugas || [],
-                    guruPiket: fallbackData.guruPiket || [],
-                    agendas: fallbackData.agendas || []
-                  });
-                  data = await importDataFromGoogleSheets(token);
+
+          if (isDecoupledFromSheets) {
+            // Firestore-only or Supabase mode
+            if (dbProvider === "supabase" && isSupabaseConfigured()) {
+              cloudState = await fetchAcademicDataFromSupabase(user.uid);
+            } else {
+              cloudState = await fetchAcademicDataFromFirestore(user.uid);
+            }
+          } else {
+            // 1. Fetch custom Spreadsheet ID from Firestore or Supabase for cross-device sync!
+            let cloudSheetId = null;
+            if (dbProvider === "supabase" && isSupabaseConfigured()) {
+              cloudSheetId = await fetchUserSpreadsheetIdFromSupabase(user.uid);
+            } else {
+              cloudSheetId = await fetchUserSpreadsheetId(user.uid);
+            }
+
+            if (cloudSheetId) {
+              setSpreadsheetId(cloudSheetId);
+            } else if (SPREADSHEET_ID) {
+              // Backup the current local spreadsheet id to cloud if not already synced
+              if (dbProvider === "supabase" && isSupabaseConfigured()) {
+                await syncUserSpreadsheetIdToSupabase(user.uid, user.email || "", SPREADSHEET_ID);
+              } else {
+                await syncUserSpreadsheetId(user.uid, user.email || "", SPREADSHEET_ID);
+              }
+            }
+
+            // 2. Fetch Academic State backup from Google Cloud Firestore
+            cloudState = await fetchAcademicDataFromFirestore(user.uid);
+
+            // 3. Auto-pull/sync upon launch/refresh from Google Sheets
+            try {
+              data = await importDataFromGoogleSheets(token);
+            } catch (sheetsErr: any) {
+              console.warn("Gagal mengimpor data secara langsung dari Google Sheets, beralih ke cadangan Firestore...", sheetsErr);
+              const errMsg = String(sheetsErr.message || "");
+              if (errMsg.includes("403") || errMsg.includes("Gagal") || !cloudSheetId) {
+                console.log("Mendeteksi galat akses atau pengguna baru. Membuat spreadsheet pribadi berjalan otomatis...");
+                try {
+                  const autoSheetId = await createGoogleSpreadsheet(token, `SiswaDigital_SDIT_AlHanif_Database`);
+                  if (autoSheetId) {
+                    setSpreadsheetId(autoSheetId);
+                    if (dbProvider === "supabase" && isSupabaseConfigured()) {
+                      await syncUserSpreadsheetIdToSupabase(user.uid, user.email || "", autoSheetId);
+                    } else {
+                      await syncUserSpreadsheetId(user.uid, user.email || "", autoSheetId);
+                    }
+                    // Push current cloudState or default empty structure to the newly created spreadsheet
+                    const fallbackData = cloudState || {
+                      kelas, mapel, siswa, kategori, penilaian,
+                      guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
+                      announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
+                    };
+                    await exportLocalDataToGoogleSheets(token, {
+                      kelas: fallbackData.kelas || [],
+                      mapel: fallbackData.mapel || [],
+                      siswa: fallbackData.siswa || [],
+                      kategori: fallbackData.kategori || [],
+                      penilaian: fallbackData.penilaian || [],
+                      guru: fallbackData.guru || fallbackData.guruCodes || [],
+                      jadwal: fallbackData.jadwal || [],
+                      tugas: fallbackData.tugas || [],
+                      absenSiswa: fallbackData.absenSiswa || [],
+                      absenGuru: fallbackData.absenGuru || [],
+                      announcements: fallbackData.announcements || [],
+                      ujianPraktek: fallbackData.ujianPraktek || [],
+                      pengumpulanTugas: fallbackData.pengumpulanTugas || [],
+                      guruPiket: fallbackData.guruPiket || [],
+                      agendas: fallbackData.agendas || []
+                    });
+                    data = await importDataFromGoogleSheets(token);
+                  }
+                } catch (createErr) {
+                  console.error("Gagal asisten cerdas pembuatan otomatis spreadsheet Google Anda:", createErr);
                 }
-              } catch (createErr) {
-                console.error("Gagal asisten cerdas pembuatan otomatis spreadsheet Google Anda:", createErr);
               }
             }
           }
@@ -1395,11 +1444,19 @@ export default function App() {
             setHasLoadedCloudData(true);
           } else {
             console.log("Pengguna baru terdeteksi dengan state kosong, menyimpan data lokal saat ini ke Cloud.");
-            await syncAcademicDataToFirestore(user.uid, {
-              kelas, mapel, siswa, kategori, penilaian,
-              guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
-              announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
-            });
+            if (isDecoupledFromSheets && dbProvider === "supabase" && isSupabaseConfigured()) {
+              await syncAcademicDataToSupabase(user.uid, {
+                kelas, mapel, siswa, kategori, penilaian,
+                guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
+                announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
+              });
+            } else {
+              await syncAcademicDataToFirestore(user.uid, {
+                kelas, mapel, siswa, kategori, penilaian,
+                guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
+                announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
+              });
+            }
             setGsLaunchSyncSuccess(true);
             setHasLoadedCloudData(true);
           }
@@ -1418,7 +1475,7 @@ export default function App() {
       }
     );
     return () => unsubscribe();
-  }, []);
+  }, [isDecoupledFromSheets, dbProvider]);
 
   useEffect(() => {
     localStorage.setItem("PSD_ANNOUNCEMENTS", JSON.stringify(announcements));
@@ -1586,8 +1643,8 @@ export default function App() {
 
     const timer = setTimeout(async () => {
       try {
-        // 1. Sync to Google Sheets if access token is available
-        if (googleAccessToken) {
+        // 1. Sync to Google Sheets if access token is available and NOT decoupled from Sheets
+        if (googleAccessToken && !isDecoupledFromSheets) {
           try {
             await exportLocalDataToGoogleSheets(googleAccessToken, {
               kelas,
@@ -1610,14 +1667,20 @@ export default function App() {
             console.error("Auto-sync background ke Google Sheets gagal, beralih ke cadangan Firestore:", sheetsErr);
             const errMsg = String(sheetsErr.message || "");
             if (errMsg.includes("403")) {
-              const cloudSheetId = await fetchUserSpreadsheetId(googleUser.uid);
+              const cloudSheetId = (dbProvider === "supabase" && isSupabaseConfigured())
+                ? await fetchUserSpreadsheetIdFromSupabase(googleUser.uid)
+                : await fetchUserSpreadsheetId(googleUser.uid);
               if (!cloudSheetId || SPREADSHEET_ID === "1fKIvJVpQ1XxTbj-eNTayRBbvMiHOYstrf3N3Lm18KcI") {
                 console.log("Membuat spreadsheet pribadi otomatis dari background sync...");
                 try {
                   const autoSheetId = await createGoogleSpreadsheet(googleAccessToken, `SiswaDigital_SDIT_AlHanif_Database`);
                   if (autoSheetId) {
                     setSpreadsheetId(autoSheetId);
-                    await syncUserSpreadsheetId(googleUser.uid, googleUser.email || "", autoSheetId);
+                    if (dbProvider === "supabase" && isSupabaseConfigured()) {
+                      await syncUserSpreadsheetIdToSupabase(googleUser.uid, googleUser.email || "", autoSheetId);
+                    } else {
+                      await syncUserSpreadsheetId(googleUser.uid, googleUser.email || "", autoSheetId);
+                    }
                     await exportLocalDataToGoogleSheets(googleAccessToken, {
                       kelas, mapel, siswa, kategori, penilaian, guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru, announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
                     });
@@ -1630,24 +1693,44 @@ export default function App() {
           }
         }
 
-        // 2. Sync to Cloud Firestore (Google Database Account) for ultimate device-switch redundancy
-        await syncAcademicDataToFirestore(googleUser.uid, {
-          kelas,
-          mapel,
-          siswa,
-          kategori,
-          penilaian,
-          guru: guruCodes,
-          jadwal,
-          tugas,
-          absenSiswa,
-          absenGuru,
-          announcements,
-          ujianPraktek,
-          pengumpulanTugas,
-          guruPiket,
-          agendas
-        });
+        // 2. Sync to Cloud Database (Firestore or Supabase)
+        if (isDecoupledFromSheets && dbProvider === "supabase" && isSupabaseConfigured()) {
+          await syncAcademicDataToSupabase(googleUser.uid, {
+            kelas,
+            mapel,
+            siswa,
+            kategori,
+            penilaian,
+            guru: guruCodes,
+            jadwal,
+            tugas,
+            absenSiswa,
+            absenGuru,
+            announcements,
+            ujianPraktek,
+            pengumpulanTugas,
+            guruPiket,
+            agendas
+          });
+        } else {
+          await syncAcademicDataToFirestore(googleUser.uid, {
+            kelas,
+            mapel,
+            siswa,
+            kategori,
+            penilaian,
+            guru: guruCodes,
+            jadwal,
+            tugas,
+            absenSiswa,
+            absenGuru,
+            announcements,
+            ujianPraktek,
+            pengumpulanTugas,
+            guruPiket,
+            agendas
+          });
+        }
 
         setCloudSyncStatus("saved");
         setCloudSyncError(null);
@@ -1655,7 +1738,7 @@ export default function App() {
       } catch (err: any) {
         console.error("Auto-sync background gagal:", err);
         setCloudSyncStatus("error");
-        setCloudSyncError(err.message || "Koneksi Google/Firestore terputus.");
+        setCloudSyncError(err.message || "Koneksi Google/Firestore terputus atau API Key kustom Anda belum diselaraskan.");
       }
     }, 4005); // 4 seconds debounce to bundle edits together
 
@@ -1679,6 +1762,8 @@ export default function App() {
     googleUser,
     googleAccessToken,
     isAutoSyncEnabled,
+    isDecoupledFromSheets,
+    dbProvider,
     hasFinishedInitialPull,
     hasLoadedCloudData
   ]);
@@ -3245,6 +3330,10 @@ export default function App() {
                     userRole={userRole || "guru"}
                     isAutoSyncEnabled={isAutoSyncEnabled}
                     setIsAutoSyncEnabled={setIsAutoSyncEnabled}
+                    isDecoupledFromSheets={isDecoupledFromSheets}
+                    setIsDecoupledFromSheets={setIsDecoupledFromSheets}
+                    dbProvider={dbProvider}
+                    setDbProvider={setDbProvider}
                     onImportAllData={handleImportAllData}
                   />
                 )}
