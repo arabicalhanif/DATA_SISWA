@@ -53,6 +53,11 @@ import {
   fetchUserSpreadsheetIdFromSupabase,
   isSupabaseConfigured
 } from "./lib/supabase";
+import {
+  syncAcademicDataToMySQL,
+  fetchAcademicDataFromMySQL,
+  isMySQLConfigured
+} from "./lib/mysql";
 import HomeworkPortal from "./components/HomeworkPortal";
 import { 
   INITIAL_KELAS, 
@@ -1339,9 +1344,11 @@ export default function App() {
         try {
           let cloudState = null;
 
-          // Always use Cloud Database sync (Firestore or Supabase) to prevent any Google Sheets errors
+          // Always use Cloud Database sync (Firestore, Supabase, or Hostinger MySQL) to prevent any Google Sheets errors
           if (dbProvider === "supabase" && isSupabaseConfigured()) {
             cloudState = await fetchAcademicDataFromSupabase(user.uid);
+          } else if (dbProvider === "mysql" && isMySQLConfigured()) {
+            cloudState = await fetchAcademicDataFromMySQL(user.uid);
           } else {
             cloudState = await fetchAcademicDataFromFirestore(user.uid);
           }
@@ -1376,6 +1383,12 @@ export default function App() {
             console.log("Pengguna baru terdeteksi dengan state kosong, menyimpan data lokal saat ini ke Cloud.");
             if (dbProvider === "supabase" && isSupabaseConfigured()) {
               await syncAcademicDataToSupabase(user.uid, {
+                kelas, mapel, siswa, kategori, penilaian,
+                guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
+                announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
+              });
+            } else if (dbProvider === "mysql" && isMySQLConfigured()) {
+              await syncAcademicDataToMySQL(user.uid, {
                 kelas, mapel, siswa, kategori, penilaian,
                 guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
                 announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
@@ -1633,9 +1646,27 @@ export default function App() {
 
     const timer = setTimeout(async () => {
       try {
-        // ALWAYS Sync direct to Cloud Database (Firestore or Supabase)
+        // ALWAYS Sync direct to Cloud Database (Firestore, Supabase, or Hostinger MySQL)
         if (dbProvider === "supabase" && isSupabaseConfigured()) {
           await syncAcademicDataToSupabase(googleUser.uid, {
+            kelas,
+            mapel,
+            siswa,
+            kategori,
+            penilaian,
+            guru: guruCodes,
+            jadwal,
+            tugas,
+            absenSiswa,
+            absenGuru,
+            announcements,
+            ujianPraktek,
+            pengumpulanTugas,
+            guruPiket,
+            agendas
+          });
+        } else if (dbProvider === "mysql" && isMySQLConfigured()) {
+          await syncAcademicDataToMySQL(googleUser.uid, {
             kelas,
             mapel,
             siswa,
@@ -2353,20 +2384,22 @@ export default function App() {
                   ? "Sedang menyinkronkan data ke Cloud Database..." 
                   : gsLaunchSyncError || cloudSyncStatus === "error"
                     ? `Gagal Sinkronisasi: ${gsLaunchSyncError || cloudSyncError}` 
-                    : `Terkoneksi Sempurna dengan Database Cloud ${dbProvider === "supabase" ? "Supabase PostgreSQL" : "Google Firestore"}`
+                    : `Terkoneksi Sempurna dengan Database Cloud ${
+                        dbProvider === "supabase" ? "Supabase PostgreSQL" : dbProvider === "mysql" ? "Hostinger MySQL Server" : "Google Firestore"
+                      }`
               }
             >
-              <div className={`w-2 h-2 rounded-full ${cloudSyncStatus === "saving" ? 'bg-amber-400 animate-ping' : gsLaunchSyncError || cloudSyncStatus === "error" ? 'bg-rose-500' : 'bg-emerald-550'}`} />
+              <div className={`w-2 h-2 rounded-full ${cloudSyncStatus === "saving" ? 'bg-amber-400 animate-ping' : gsLaunchSyncError || cloudSyncStatus === "error" ? 'bg-rose-500' : 'bg-[#577354]'}`} />
               <span className="hidden sm:inline">
                 {cloudSyncStatus === "saving"
-                  ? "Menyimpan ke Awan..."
+                  ? "Menyimpan... "
                   : cloudSyncStatus === "saved"
                     ? "Tersimpan Online"
                     : gsLaunchSyncError || cloudSyncStatus === "error"
                       ? "Cloud Error" 
-                      : `Cloud Sinkron: Aktif (${dbProvider === "supabase" ? "Supabase" : "Firestore"})`}
+                      : `Cloud Sinkron: Aktif (${dbProvider === "supabase" ? "Supabase" : dbProvider === "mysql" ? "MySQL" : "Firestore"})`}
               </span>
-              <span className="sm:hidden font-extrabold">{dbProvider === "supabase" ? "Supabase: OK" : "Firestore: OK"}</span>
+              <span className="sm:hidden font-extrabold">{dbProvider === "supabase" ? "Supabase" : dbProvider === "mysql" ? "MySQL" : "Firestore"}</span>
             </div>
           ) : null}
 

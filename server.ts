@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import mysql from "mysql2/promise";
 
 dotenv.config();
 
@@ -12,6 +13,167 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // API Routes for Hostinger MySQL Integration
+  app.post("/api/mysql/test", async (req: express.Request, res: express.Response) => {
+    const { host, port, user, pass, db } = req.body;
+    if (!host || !user || !db) {
+      return res.status(400).json({ error: "Hostname, username, dan nama database wajib diisi." });
+    }
+
+    let connection;
+    try {
+      connection = await mysql.createConnection({
+        host,
+        port: Number(port) || 3306,
+        user,
+        password: pass,
+        database: db,
+        connectTimeout: 7000 // 7 seconds timeout
+      });
+
+      await connection.query("SELECT 1");
+      await connection.end();
+
+      return res.json({
+        success: true,
+        message: `Koneksi berhasil! Berhasil terhubung ke database '${db}' di server MySQL '${host}'.`
+      });
+    } catch (err: any) {
+      if (connection) {
+        try { await connection.end(); } catch (e) {}
+      }
+      console.error("Kesalahan tes koneksi MySQL Hostinger:", err);
+      let errMsg = err.message || "Gagal menghubungkan ke MySQL.";
+      if (err.code === "ETIMEDOUT" || err.code === "ECONNREFUSED") {
+        errMsg = `Koneksi ditolak (Timeout / Conn Refused). Pastikan Anda telah mengaktifkan akses 'Remote MySQL' di Hostinger CPanel Anda dengan mengizinkan Host IP '%' atau IP server ini.`;
+      }
+      return res.status(500).json({
+        success: false,
+        error: errMsg
+      });
+    }
+  });
+
+  app.post("/api/mysql/sync", async (req: express.Request, res: express.Response) => {
+    const { config, userId, payload } = req.body;
+    if (!config || !userId || !payload) {
+      return res.status(400).json({ error: "Parameter sinkronisasi kurang lengkap." });
+    }
+
+    const { host, port, user, pass, db } = config;
+    if (!host || !user || !db) {
+      return res.status(400).json({ error: "Kredensial database tidak lengkap." });
+    }
+
+    let connection;
+    try {
+      connection = await mysql.createConnection({
+        host,
+        port: Number(port) || 3306,
+        user,
+        password: pass,
+        database: db,
+        connectTimeout: 7000
+      });
+
+      // 1. Buat tabel jika belum ada
+      const createTableQuery = `
+        CREATE TABLE IF NOT EXISTS academic_data (
+          user_id VARCHAR(255) PRIMARY KEY,
+          payload LONGTEXT NOT NULL,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `;
+      await connection.query(createTableQuery);
+
+      // 2. Simpan atau perbarui payload
+      const payloadString = JSON.stringify(payload);
+      const upsertQuery = `
+        INSERT INTO academic_data (user_id, payload, updated_at)
+        VALUES (?, ?, NOW())
+        ON DUPLICATE KEY UPDATE payload = ?, updated_at = NOW()
+      `;
+      await connection.query(upsertQuery, [userId, payloadString, payloadString]);
+      await connection.end();
+
+      return res.json({
+        success: true,
+        message: "Sinkronisasi berhasil! Seluruh data akademis berhasil tersimpan aman di database Hostinger MySQL."
+      });
+    } catch (err: any) {
+      if (connection) {
+        try { await connection.end(); } catch (e) {}
+      }
+      console.error("Gagal sinkronisasi MySQL:", err);
+      return res.status(500).json({
+        success: false,
+        error: err.message || "Gagal sinkronisasi data ke Hostinger MySQL."
+      });
+    }
+  });
+
+  app.post("/api/mysql/fetch", async (req: express.Request, res: express.Response) => {
+    const { config, userId } = req.body;
+    if (!config || !userId) {
+      return res.status(400).json({ error: "Parameter request tidak lengkap." });
+    }
+
+    const { host, port, user, pass, db } = config;
+    if (!host || !user || !db) {
+      return res.status(400).json({ error: "Kredensial database tidak lengkap." });
+    }
+
+    let connection;
+    try {
+      connection = await mysql.createConnection({
+        host,
+        port: Number(port) || 3306,
+        user,
+        password: pass,
+        database: db,
+        connectTimeout: 7000
+      });
+
+      // Buat tabel jika belum ada (mencegah error tabel tidak ada)
+      const createTableQuery = `
+        CREATE TABLE IF NOT EXISTS academic_data (
+          user_id VARCHAR(255) PRIMARY KEY,
+          payload LONGTEXT NOT NULL,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `;
+      await connection.query(createTableQuery);
+
+      const [rows]: any = await connection.query(
+        "SELECT payload FROM academic_data WHERE user_id = ?",
+        [userId]
+      );
+      await connection.end();
+
+      if (rows.length === 0) {
+        return res.json({ success: true, payload: null, message: "Data tidak ditemukan." });
+      }
+
+      const rawPayload = rows[0].payload;
+      const parsedPayload = typeof rawPayload === "string" ? JSON.parse(rawPayload) : rawPayload;
+
+      return res.json({
+        success: true,
+        payload: parsedPayload,
+        message: "Berhasil memulihkan data sekolah."
+      });
+    } catch (err: any) {
+      if (connection) {
+        try { await connection.end(); } catch (e) {}
+      }
+      console.error("Gagal mengambil data dari MySQL:", err);
+      return res.status(500).json({
+        success: false,
+        error: err.message || "Gagal mengunduh data dari Hostinger MySQL."
+      });
+    }
+  });
 
   // Safe client lazily initialized
   let aiClient: GoogleGenAI | null = null;

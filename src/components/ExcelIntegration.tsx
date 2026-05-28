@@ -52,6 +52,16 @@ import {
   saveLocalSupabaseCredentials,
   clearLocalSupabaseCredentials
 } from "../lib/supabase";
+import {
+  getMySQLConfig,
+  isMySQLConfigured,
+  saveLocalMySQLCredentials,
+  clearLocalMySQLCredentials,
+  testMySQLConnection,
+  syncAcademicDataToMySQL,
+  fetchAcademicDataFromMySQL,
+  MySQLConfig
+} from "../lib/mysql";
 
 interface ExcelIntegrationProps {
   kelas: Kelas[];
@@ -170,6 +180,18 @@ export default function ExcelIntegration({
   const [supabaseUrl, setSupabaseUrlInput] = useState(() => getSupabaseUrl());
   const [supabaseAnonKey, setSupabaseAnonKeyInput] = useState(() => getSupabaseAnonKey());
   const [isSupabaseSaved, setIsSupabaseSaved] = useState(false);
+
+  // MySQL Hostinger connection states
+  const [mysqlHost, setMysqlHost] = useState(() => getMySQLConfig().host);
+  const [mysqlPort, setMysqlPort] = useState(() => String(getMySQLConfig().port));
+  const [mysqlUser, setMysqlUser] = useState(() => getMySQLConfig().user);
+  const [mysqlPass, setMysqlPass] = useState(() => getMySQLConfig().pass);
+  const [mysqlDb, setMysqlDb] = useState(() => getMySQLConfig().db);
+  const [isMysqlSaved, setIsMysqlSaved] = useState(false);
+  const [isTestingMysql, setIsTestingMysql] = useState(false);
+  const [mysqlTestResult, setMysqlTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isMysqlSyncingIn, setIsMysqlSyncingIn] = useState(false);
+  const [isMysqlSyncingOut, setIsMysqlSyncingOut] = useState(false);
 
   // Initialize Auth State Listener on Mount
   useEffect(() => {
@@ -508,6 +530,113 @@ export default function ExcelIntegration({
     } catch (err: any) {
       console.error(err);
       setSheetError(err.message || "Gagal memulihkan data dari Supabase.");
+    } finally {
+      setIsSyncingIn(false);
+    }
+  };
+
+  const handlePushToMySQL = async () => {
+    if (userRole !== "admin" && userRole !== "guru") {
+      setSheetError("Akses Ditolak: Hanya Guru atau Administrator yang berwenang untuk mencadangkan data.");
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setSheetError("Silakan sambungkan Akun Anda terlebih dahulu!");
+      return;
+    }
+    if (!isMySQLConfigured()) {
+      setSheetError("Gagal: Hubungkan database MySQL Hostinger Anda terlebih dahulu dengan mengisi kredensial secara lengkap.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Apakah Anda yakin ingin menimpa cadangan di MySQL Hostinger dengan data lokal saat ini? Data lama di tabel academic_data akan diperbarui sepenuhnya."
+    );
+    if (!confirmed) return;
+
+    setIsSyncingOut(true);
+    setSheetError(null);
+    setSheetStatus("Mengunggah data sekolah langsung ke server MySQL Hostinger aman...");
+    try {
+      await syncAcademicDataToMySQL(currentUser.uid, {
+        kelas,
+        mapel,
+        siswa,
+        kategori,
+        penilaian,
+        guru: guruCodes,
+        jadwal,
+        tugas,
+        absenSiswa,
+        absenGuru,
+        announcements,
+        ujianPraktek,
+        pengumpulanTugas,
+        guruPiket,
+        agendas
+      });
+      setSheetStatus("Cadangan Berhasil! Data Anda kini dicadangkan dengan aman ke database Hostinger MySQL.");
+    } catch (err: any) {
+      console.error(err);
+      setSheetError(err.message || "Gagal mencadangkan data ke MySQL Hostinger.");
+    } finally {
+      setIsSyncingOut(false);
+    }
+  };
+
+  const handlePullFromMySQL = async () => {
+    if (userRole !== "admin" && userRole !== "guru") {
+      setSheetError("Akses Ditolak: Hanya Guru atau Administrator yang berwenang untuk memulihkan data.");
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setSheetError("Silakan sambungkan Akun Anda terlebih dahulu!");
+      return;
+    }
+    if (!isMySQLConfigured()) {
+      setSheetError("Gagal: Hubungkan database MySQL Hostinger Anda terlebih dahulu dengan mengisi kredensial secara lengkap.");
+      return;
+    }
+    setIsSyncingIn(true);
+    setSheetError(null);
+    setSheetStatus("Mengambil cadangan data akademis dari MySQL Hostinger...");
+    try {
+      const data = await fetchAcademicDataFromMySQL(currentUser.uid);
+      if (!data) {
+        throw new Error("Tidak ditemukan database di MySQL Hostinger untuk akun Anda. Silakan cadangkan data lokal Anda terlebih dahulu.");
+      }
+      
+      let count = 0;
+      if (data.penilaian) {
+        data.penilaian.forEach((p: any) => {
+          count += (p.grades || []).length;
+        });
+      }
+
+      setParsedData({
+        kelas: data.kelas || [],
+        mapel: data.mapel || [],
+        siswa: data.siswa || [],
+        kategori: data.kategori || [],
+        penilaian: data.penilaian || [],
+        guru: data.guru || [],
+        jadwal: data.jadwal || [],
+        tugas: data.tugas || [],
+        absenSiswa: data.absenSiswa || [],
+        absenGuru: data.absenGuru || [],
+        announcements: data.announcements || [],
+        ujianPraktek: data.ujianPraktek || [],
+        pengumpulanTugas: data.pengumpulanTugas || [],
+        guruPiket: data.guruPiket || [],
+        agendas: data.agendas || [],
+        totalGradesCount: count
+      });
+      setImportMode("replace");
+      setSheetStatus("Cadangan data berhasil dimuat dari MySQL Hostinger! Klik 'Simpan Semua Data ke Sistem' di panel bawah untuk menerapkan.");
+    } catch (err: any) {
+      console.error(err);
+      setSheetError(err.message || "Gagal memulihkan data dari MySQL Hostinger.");
     } finally {
       setIsSyncingIn(false);
     }
@@ -1342,19 +1471,19 @@ export default function ExcelIntegration({
                     Mode Media Penyimpanan Cloud
                   </h3>
                   <p className="text-xs text-slate-505 mt-1 max-w-2xl leading-relaxed">
-                    Tentukan bagaimana SiswaDigital menyinkronkan data akademis secara aman. Anda dapat menggunakan database cloud Firestore tersentralisasi secara murni atau menyinkronkannya juga ke tabel spreadsheet online Google Sheets.
+                    Tentukan bagaimana SiswaDigital menyinkronkan data akademis secara aman. Anda dapat menggunakan database cloud Firestore tersentralisasi secara murni, Supabase PostgreSQL, atau MySQL Server Hostinger Anda.
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-xs font-semibold text-slate-500">Otorisasi Aturan:</span>
                   <span className="px-2.5 py-1 text-[10px] bg-[#8BA888]/10 text-[#577354] rounded-full font-bold flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-[#8BA888] animate-ping" />
-                    Firestore Izinkan Semua/Terkoneksi
+                    Koneksi Cloud Siap Aktif
                   </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Card 1: Cloud Firestore Murni */}
                 <button
                   type="button"
@@ -1375,14 +1504,14 @@ export default function ExcelIntegration({
                       </div>
                       {(isDecoupledFromSheets && dbProvider === "firestore") && (
                         <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
-                          Direkomendasikan (Aktif)
+                          Firestore Aktif
                         </span>
                       )}
                     </div>
                     <div>
-                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Cloud Firestore Murni</h4>
+                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Google Firestore</h4>
                       <p className="text-[11px] text-slate-550 mt-1.5 leading-relaxed font-sans">
-                        Database sekolah disimpan langsung ke Cloud Firestore. Sangat cepat, instan, bebas dari segala kendala izin (Permission Denied) ataupun Google Drive penuh. Sempurna untuk kelancaran mengajar guru.
+                        Penyimpanan cloud langsung ke Google Cloud Firestore. Sangat cepat, instan, bebas dari segala kendala izin ataupun quota penuh. Sempurna untuk kelancaran guru.
                       </p>
                     </div>
                   </div>
@@ -1419,9 +1548,9 @@ export default function ExcelIntegration({
                       )}
                     </div>
                     <div>
-                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Supabase PostgreSQL</h4>
+                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Supabase Postgres</h4>
                       <p className="text-[11px] text-slate-550 mt-1.5 leading-relaxed font-sans">
-                        Penyimpanan cloud dialihkan ke database cloud PostgreSQL Supabase Anda. Meningkatkan kedaulatan data penuh, keamanan enkripsi andal, dan andal tanpa sheets.
+                        Penyimpanan cloud dialihkan ke database cloud PostgreSQL Supabase kustom Anda. Enkripsi handal, andal tanpa batasan eksternal.
                       </p>
                     </div>
                   </div>
@@ -1429,6 +1558,45 @@ export default function ExcelIntegration({
                     <span>Opsi Koneksi: Supabase Cloud</span>
                     <span className={`w-5 h-5 rounded-full flex items-center justify-center ${(isDecoupledFromSheets && dbProvider === "supabase") ? "bg-[#8BA888] text-white" : "border-2 border-slate-300 bg-white"}`}>
                       {(isDecoupledFromSheets && dbProvider === "supabase") && "✓"}
+                    </span>
+                  </div>
+                </button>
+
+                {/* Card 3: Hostinger MySQL */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDecoupledFromSheets?.(true);
+                    setDbProvider?.("mysql");
+                  }}
+                  className={`p-5 rounded-2xl text-left border transition-all duration-300 relative flex flex-col justify-between h-full hover:shadow-md cursor-pointer ${
+                    (isDecoupledFromSheets && dbProvider === "mysql")
+                      ? "bg-white border-[#8BA888] ring-2 ring-[#8BA888]/10 shadow-xs"
+                      : "bg-white/50 border-slate-200 hover:bg-white"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className={`p-2.5 rounded-xl ${(isDecoupledFromSheets && dbProvider === "mysql") ? "bg-[#8BA888]/10 text-[#577354]" : "bg-slate-100 text-slate-505"}`}>
+                        <HardDrive className="w-5 h-5" />
+                      </div>
+                      {(isDecoupledFromSheets && dbProvider === "mysql") && (
+                        <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
+                          MySQL Aktif
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-sm">Mode MySQL Hostinger</h4>
+                      <p className="text-[11px] text-slate-550 mt-1.5 leading-relaxed font-sans">
+                        Koneksi langsung ke server database MySQL Hostinger (srv1762.hstgr.io). Dukungan penuh kedaulatan data independen SDIT Al-Hanif.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full text-xs font-bold text-slate-600">
+                    <span>Opsi Koneksi: MySQL Hostinger</span>
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center ${(isDecoupledFromSheets && dbProvider === "mysql") ? "bg-[#8BA888] text-white" : "border-2 border-slate-300 bg-white"}`}>
+                      {(isDecoupledFromSheets && dbProvider === "mysql") && "✓"}
                     </span>
                   </div>
                 </button>
@@ -1551,6 +1719,215 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
   updated_at timestamptz DEFAULT now()
 );`}
                   </pre>
+                </div>
+              </div>
+            ) : isDecoupledFromSheets && dbProvider === "mysql" ? (
+              <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-xs space-y-5 animate-fadeIn">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#8BA888] flex items-center justify-center shrink-0">
+                    <HardDrive className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">MySQL Hostinger</h3>
+                    <p className="text-xs text-slate-550 mt-1 leading-relaxed">
+                      Konfigurasikan detail database MySQL Hostinger Anda untuk pencadangan mandiri yang aman dan independen.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 pt-1">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                        MySQL Server Host IP/Name:
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="srv1762.hstgr.io"
+                        value={mysqlHost}
+                        onChange={(e) => {
+                          setMysqlHost(e.target.value);
+                          setIsMysqlSaved(false);
+                        }}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-[#8BA888] focus:bg-white text-xs rounded-xl focus:outline-none transition-all duration-250 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                        Port:
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="3306"
+                        value={mysqlPort}
+                        onChange={(e) => {
+                          setMysqlPort(e.target.value);
+                          setIsMysqlSaved(false);
+                        }}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-[#8BA888] focus:bg-white text-xs rounded-xl focus:outline-none transition-all duration-250 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                      Username database:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="u826075477_user"
+                      value={mysqlUser}
+                      onChange={(e) => {
+                        setMysqlUser(e.target.value);
+                        setIsMysqlSaved(false);
+                      }}
+                      className="w-full px-4 py-1.5 bg-slate-50 border border-slate-200 focus:border-[#8BA888] focus:bg-white text-xs rounded-xl focus:outline-none transition-all duration-250 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                      Password database:
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="Password database MySQL Anda"
+                      value={mysqlPass}
+                      onChange={(e) => {
+                        setMysqlPass(e.target.value);
+                        setIsMysqlSaved(false);
+                      }}
+                      className="w-full px-4 py-1.5 bg-slate-50 border border-slate-200 focus:border-[#8BA888] focus:bg-white text-xs rounded-xl focus:outline-none transition-all duration-250 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                      Nama Database (Db Name):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="u826075477_db"
+                      value={mysqlDb}
+                      onChange={(e) => {
+                        setMysqlDb(e.target.value);
+                        setIsMysqlSaved(false);
+                      }}
+                      className="w-full px-4 py-1.5 bg-slate-50 border border-slate-200 focus:border-[#8BA888] focus:bg-white text-xs rounded-xl focus:outline-none transition-all duration-250 font-mono"
+                    />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!mysqlHost || !mysqlPort || !mysqlUser || !mysqlPass || !mysqlDb) {
+                          setSheetError("Harap isi semua kolom kredensial MySQL secara lengkap!");
+                          return;
+                        }
+                        saveLocalMySQLCredentials({
+                          host: mysqlHost,
+                          port: Number(mysqlPort) || 3306,
+                          user: mysqlUser,
+                          pass: mysqlPass,
+                          db: mysqlDb
+                        });
+                        setIsMysqlSaved(true);
+                        setSheetError(null);
+                        setSheetStatus("Kredensial MySQL kustom berhasil disimpan secara lokal di browser!");
+                        setTimeout(() => setIsMysqlSaved(false), 3000);
+                      }}
+                      className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all duration-250 cursor-pointer text-center text-white ${
+                        isMysqlSaved 
+                          ? "bg-emerald-600" 
+                          : "bg-[#8BA888] hover:bg-[#7b9878]"
+                      }`}
+                    >
+                      {isMysqlSaved ? "✓ Tersimpan!" : "Simpan Kredensial"}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isTestingMysql}
+                      onClick={async () => {
+                        if (!mysqlHost || !mysqlPort || !mysqlUser || !mysqlPass || !mysqlDb) {
+                          setSheetError("Harap isi seluruh kolom kredensial sebelum memulai uji koneksi!");
+                          return;
+                        }
+                        setIsTestingMysql(true);
+                        setMysqlTestResult(null);
+                        setSheetStatus("Sedang menguji koneksi ke server MySQL Hostinger... Silakan tunggu.");
+                        try {
+                          const res = await testMySQLConnection({
+                            host: mysqlHost,
+                            port: Number(mysqlPort) || 3306,
+                            user: mysqlUser,
+                            pass: mysqlPass,
+                            db: mysqlDb
+                          });
+                          setMysqlTestResult(res);
+                          if (res.success) {
+                            setSheetStatus("Koneksi MySQL Sukses! Database merespon dengan sempurna.");
+                          } else {
+                            setSheetError("Koneksi MySQL Gagal: " + res.message);
+                          }
+                        } catch (err: any) {
+                          setMysqlTestResult({ success: false, message: err.message });
+                          setSheetError("Gagal menguji koneksi: " + err.message);
+                        } finally {
+                          setIsTestingMysql(false);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 font-bold text-xs text-slate-600 rounded-xl cursor-pointer flex items-center gap-1"
+                    >
+                      {isTestingMysql ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Uji Koneksi"}
+                    </button>
+
+                    {isMySQLConfigured() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearLocalMySQLCredentials();
+                          setMysqlHost("");
+                          setMysqlPort("");
+                          setMysqlUser("");
+                          setMysqlPass("");
+                          setMysqlDb("");
+                          setSheetStatus("Kredensial MySQL kustom telah dikosongkan.");
+                          setIsMysqlSaved(false);
+                          setMysqlTestResult(null);
+                        }}
+                        className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 font-bold text-xs text-rose-600 rounded-xl cursor-pointer"
+                        title="Hapus Kredensial MySQL"
+                      >
+                        Hapus
+                      </button>
+                    )}
+                  </div>
+
+                  {mysqlTestResult && (
+                    <div className={`p-2.5 rounded-xl border text-[10px] leading-relaxed font-mono ${
+                      mysqlTestResult.success 
+                        ? "bg-emerald-50 border-emerald-250 text-emerald-800" 
+                        : "bg-rose-50 border-rose-200 text-rose-800"
+                    }`}>
+                      <div className="font-bold flex items-center gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${mysqlTestResult.success ? "bg-emerald-500 animate-ping" : "bg-rose-500"}`} />
+                        {mysqlTestResult.success ? "HASIL: KONEKSI BERHASIL!" : "HASIL: GAGAL TERHUBUNG"}
+                      </div>
+                      <p className="mt-1 font-semibold">{mysqlTestResult.message}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-[#FAF9F5] p-4 rounded-xl border border-amber-200/60 leading-relaxed text-slate-600 text-[11px] space-y-1">
+                  <span className="font-extrabold text-slate-700 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                    Aturan Hubung Hostinger MySQL:
+                  </span>
+                  <p className="text-[10px] text-slate-500">
+                    Sistem backend Node.js akan menginisiasi tabel <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">academic_data</code> secara otomatis jika belum ada di database Hostinger Anda. Pastikan IP server Node.js diizinkan di panel <strong>Remote MySQL</strong> Hostinger Anda.
+                  </p>
                 </div>
               </div>
             ) : isDecoupledFromSheets ? (
@@ -1790,7 +2167,11 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                       </div>
                       <div>
                         <div className="font-bold text-sm text-slate-800">
-                          {dbProvider === "supabase" ? "Koneksi Supabase PostgreSQL" : "Koneksi Cloud Firestore"}
+                          {dbProvider === "supabase" 
+                            ? "Koneksi Supabase PostgreSQL" 
+                            : dbProvider === "mysql" 
+                              ? "Koneksi Hostinger MySQL" 
+                              : "Koneksi Cloud Firestore"}
                         </div>
                         <div className="text-[10px] font-mono text-emerald-600 font-bold uppercase tracking-wider flex items-center gap-1.5 align-middle">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse relative top-[1px]" />
@@ -1804,7 +2185,13 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* Exporter / Push */}
                     <button
-                      onClick={dbProvider === "supabase" ? handlePushToSupabase : handlePushToFirestore}
+                      onClick={
+                        dbProvider === "supabase" 
+                          ? handlePushToSupabase 
+                          : dbProvider === "mysql" 
+                            ? handlePushToMySQL 
+                            : handlePushToFirestore
+                      }
                       disabled={isSyncingIn || isSyncingOut}
                       type="button"
                       className="flex flex-col items-center justify-center p-6 bg-emerald-50/50 border border-emerald-100/75 hover:border-emerald-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
@@ -1818,17 +2205,31 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                       </div>
                       <div>
                         <div className="font-bold text-slate-800 text-sm">
-                          {dbProvider === "supabase" ? "Cadangkan ke Supabase" : "Cadangkan ke Firestore"}
+                          {dbProvider === "supabase" 
+                            ? "Cadangkan ke Supabase" 
+                            : dbProvider === "mysql" 
+                              ? "Cadangkan ke MySQL Hostinger" 
+                              : "Cadangkan ke Firestore"}
                         </div>
                         <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
-                          {dbProvider === "supabase" ? "Mengamankan seluruh data sekolah ke PostgreSQL Supabase kustom." : "Mengamankan seluruh data sekolah ke database cloud instan."}
+                          {dbProvider === "supabase" 
+                            ? "Mengamankan seluruh data sekolah ke PostgreSQL Supabase kustom." 
+                            : dbProvider === "mysql"
+                              ? "Mengamankan seluruh data sekolah ke server MySQL Hostinger Anda."
+                              : "Mengamankan seluruh data sekolah ke database cloud instan."}
                         </div>
                       </div>
                     </button>
 
                     {/* Importer / Pull */}
                     <button
-                      onClick={dbProvider === "supabase" ? handlePullFromSupabase : handlePullFromFirestore}
+                      onClick={
+                        dbProvider === "supabase" 
+                          ? handlePullFromSupabase 
+                          : dbProvider === "mysql" 
+                            ? handlePullFromMySQL 
+                            : handlePullFromFirestore
+                      }
                       disabled={isSyncingIn || isSyncingOut}
                       type="button"
                       className="flex flex-col items-center justify-center p-6 bg-blue-50/50 border border-blue-100 hover:border-blue-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
@@ -1842,10 +2243,18 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                       </div>
                       <div>
                         <div className="font-bold text-slate-800 text-sm">
-                          {dbProvider === "supabase" ? "Muat dari Supabase" : "Muat dari Firestore"}
+                          {dbProvider === "supabase" 
+                            ? "Muat dari Supabase" 
+                            : dbProvider === "mysql" 
+                              ? "Muat dari MySQL Hostinger" 
+                              : "Muat dari Firestore"}
                         </div>
                         <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
-                          {dbProvider === "supabase" ? "Memulihkan data sekolah dari database PostgreSQL Supabase Anda." : "Memulihkan data sekolah dari cadangan awan Firestore Anda."}
+                          {dbProvider === "supabase" 
+                            ? "Memulihkan data sekolah dari database PostgreSQL Supabase Anda." 
+                            : dbProvider === "mysql"
+                              ? "Memulihkan data sekolah dari database MySQL Hostinger Anda."
+                              : "Memulihkan data sekolah dari cadangan awan Firestore Anda."}
                         </div>
                       </div>
                     </button>
@@ -1976,7 +2385,15 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* Exporter / Push */}
                     <button
-                      onClick={isDecoupledFromSheets ? (dbProvider === "supabase" ? handlePushToSupabase : handlePushToFirestore) : handlePushToSheets}
+                      onClick={
+                        isDecoupledFromSheets 
+                          ? (dbProvider === "supabase" 
+                            ? handlePushToSupabase 
+                            : dbProvider === "mysql" 
+                              ? handlePushToMySQL 
+                              : handlePushToFirestore) 
+                          : handlePushToSheets
+                      }
                       disabled={isSyncingIn || isSyncingOut}
                       type="button"
                       className="flex flex-col items-center justify-center p-6 bg-emerald-50/50 border border-emerald-100/75 hover:border-emerald-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
@@ -1990,17 +2407,37 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                       </div>
                       <div>
                         <div className="font-bold text-slate-800 text-sm">
-                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Cadangkan ke Supabase" : "Cadangkan ke Firestore") : "Kirim ke Google Sheets"}
+                          {isDecoupledFromSheets 
+                            ? (dbProvider === "supabase" 
+                              ? "Cadangkan ke Supabase" 
+                              : dbProvider === "mysql" 
+                                ? "Cadangkan ke MySQL Hostinger" 
+                                : "Cadangkan ke Firestore") 
+                            : "Kirim ke Google Sheets"}
                         </div>
                         <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
-                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Mengamankan seluruh data sekolah ke PostgreSQL Supabase kustom." : "Mengamankan seluruh data sekolah ke database cloud instan.") : "Mencatat data lokal Anda ke lembaran Google Sheets."}
+                          {isDecoupledFromSheets 
+                            ? (dbProvider === "supabase" 
+                              ? "Mengamankan seluruh data sekolah ke PostgreSQL Supabase kustom." 
+                              : dbProvider === "mysql"
+                                ? "Mengamankan seluruh data sekolah ke server MySQL Hostinger Anda."
+                                : "Mengamankan seluruh data sekolah ke database cloud instan.") 
+                            : "Mencatat data lokal Anda ke lembaran Google Sheets."}
                         </div>
                       </div>
                     </button>
 
                     {/* Importer / Pull */}
                     <button
-                      onClick={isDecoupledFromSheets ? (dbProvider === "supabase" ? handlePullFromSupabase : handlePullFromFirestore) : handlePullFromSheets}
+                      onClick={
+                        isDecoupledFromSheets 
+                          ? (dbProvider === "supabase" 
+                            ? handlePullFromSupabase 
+                            : dbProvider === "mysql" 
+                              ? handlePullFromMySQL 
+                              : handlePullFromFirestore) 
+                          : handlePullFromSheets
+                      }
                       disabled={isSyncingIn || isSyncingOut}
                       type="button"
                       className="flex flex-col items-center justify-center p-6 bg-blue-50/50 border border-blue-100 hover:border-blue-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
@@ -2014,10 +2451,22 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                       </div>
                       <div>
                         <div className="font-bold text-slate-800 text-sm">
-                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Muat dari Supabase" : "Muat dari Firestore") : "Tarik dari Google Sheets"}
+                          {isDecoupledFromSheets 
+                            ? (dbProvider === "supabase" 
+                              ? "Muat dari Supabase" 
+                              : dbProvider === "mysql" 
+                                ? "Muat dari MySQL Hostinger" 
+                                : "Muat dari Firestore") 
+                            : "Tarik dari Google Sheets"}
                         </div>
                         <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
-                          {isDecoupledFromSheets ? (dbProvider === "supabase" ? "Memulihkan data sekolah dari database PostgreSQL Supabase Anda." : "Memulihkan data sekolah dari cadangan awan Firestore Anda.") : "Impor data dari spreadsheet cloud ke sistem Anda."}
+                          {isDecoupledFromSheets 
+                            ? (dbProvider === "supabase" 
+                              ? "Memulihkan data sekolah dari database PostgreSQL Supabase Anda." 
+                              : dbProvider === "mysql"
+                                ? "Memulihkan data sekolah dari database MySQL Hostinger Anda."
+                                : "Memulihkan data sekolah dari cadangan awan Firestore Anda.") 
+                            : "Impor data dari spreadsheet cloud ke sistem Anda."}
                         </div>
                       </div>
                     </button>
