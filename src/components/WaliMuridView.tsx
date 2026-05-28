@@ -71,8 +71,8 @@ interface WaliMuridViewProps {
   showWelcomeBanners?: boolean;
   activeSiswaProp?: Siswa | null;
   setActiveSiswaProp?: (s: Siswa | null) => void;
-  parentActiveTabProp?: "rapor" | "absen" | "jadwal" | "tugas" | "les" | "kalender" | "hubungi";
-  setParentActiveTabProp?: (t: "rapor" | "absen" | "jadwal" | "tugas" | "les" | "kalender" | "hubungi") => void;
+  parentActiveTabProp?: "rapor" | "absen" | "jadwal" | "tugas" | "les" | "kalender" | "ekstra" | "hubungi";
+  setParentActiveTabProp?: (t: "rapor" | "absen" | "jadwal" | "tugas" | "les" | "kalender" | "ekstra" | "hubungi") => void;
 }
 
 export interface LesProgram {

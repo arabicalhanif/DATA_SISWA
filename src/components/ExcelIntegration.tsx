@@ -130,6 +130,13 @@ export default function ExcelIntegration({
     guru?: GuruCode[];
     jadwal?: Jadwal[];
     tugas?: Tugas[];
+    absenSiswa?: AbsenSiswa[];
+    absenGuru?: AbsenGuru[];
+    announcements?: Announcement[];
+    ujianPraktek?: UjianPraktek[];
+    pengumpulanTugas?: PengumpulanTugas[];
+    guruPiket?: GuruPiket[];
+    agendas?: TeacherAgenda[];
     totalGradesCount: number;
   } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1090,7 +1097,7 @@ export default function ExcelIntegration({
             }`}
           >
             <Cloud className="w-5 h-5 animate-pulse" />
-            {isDecoupledFromSheets ? "Autosync Cloud (Firestore Murni)" : "Google Sheets Sync (Cloud)"}
+            Penyimpanan Database Cloud
             <span className="bg-emerald-100 text-emerald-700 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">Live</span>
           </button>
         )}
@@ -1109,6 +1116,221 @@ export default function ExcelIntegration({
       </div>
 
       {activeSubTab === "sheets" && (userRole === "admin" || userRole === "guru") && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fadeIn">
+          {/* Main Dashboard Panel - 7 columns */}
+          <div className="lg:col-span-12 xl:col-span-7 space-y-6 animate-fadeIn">
+            <div className="bg-white p-6 rounded-3xl border border-slate-205 shadow-sm space-y-5">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#8BA888] flex items-center justify-center shrink-0">
+                  <Database className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-lg">Pangkalan Data Portal SDIT Al-Hanif</h3>
+                  <p className="text-xs text-slate-550 mt-1">
+                    Sistem database luring mandiri ini dikonfigurasi khusus untuk server Hostinger dan domain kustom SDIT Al-Hanif Anda. Semua data tersimpan aman secara terintegrasi penuh.
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Indicator Bar */}
+              <div className="flex items-center justify-between bg-[#F7F8F3] border border-slate-100 p-4 rounded-2xl">
+                <div className="flex items-center gap-3">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </span>
+                  <div>
+                    <div className="text-xs font-bold text-slate-800">Status Server & Database</div>
+                    <div className="text-[10px] text-emerald-700 font-bold font-mono text-emerald-600">TERPADU & AKTIF LOKAL (HOSTINGER DEPLOYMENT)</div>
+                  </div>
+                </div>
+                <span className="hidden sm:inline bg-emerald-100 text-emerald-800 text-[10px] font-black tracking-wide uppercase px-3 py-1 rounded-lg">
+                  100% Independen
+                </span>
+              </div>
+
+              {/* Stat Counters Table */}
+              <div className="space-y-3">
+                <div className="text-xs font-black text-slate-400 uppercase tracking-wider">Metrik Integritas Struktur Tabel</div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Rombel Kelas</span>
+                    <span className="text-base font-black text-slate-800 mt-1">{kelas.length} <span className="text-[10px] text-slate-450 font-medium">unit</span></span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Mata Pelajaran</span>
+                    <span className="text-base font-black text-slate-800 mt-1">{mapel.length} <span className="text-[10px] text-slate-455 font-medium">mapel</span></span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Siswa Terdaftar</span>
+                    <span className="text-base font-black text-slate-800 mt-1">{siswa.length} <span className="text-[10px] text-slate-455 font-medium">anak</span></span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Ustadz/Ustadzah</span>
+                    <span className="text-base font-black text-slate-800 mt-1">{guruCodes.length} <span className="text-[10px] text-slate-455 font-medium">guru</span></span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Evaluasi Nilai</span>
+                    <span className="text-base font-black text-slate-800 mt-1">{penilaian.reduce((sum, p) => sum + (p.grades || []).length, 0)} <span className="text-[10px] text-slate-455 font-medium">entri</span></span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Draf Penilaian</span>
+                    <span className="text-base font-black text-slate-885 mt-1">{penilaian.length} <span className="text-[10px] text-slate-455 font-medium">grup</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Backup & Actions Dashboard Column - 5 columns */}
+          <div className="lg:col-span-12 xl:col-span-5 space-y-6">
+            <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-sm space-y-5 animate-fadeIn">
+              <div>
+                <h4 className="font-extrabold text-[#577354] text-sm">Konsol Pencadangan Database JSON</h4>
+                <p className="text-[11px] text-slate-505 mt-1 leading-relaxed">
+                  Ekspor status pangkalan data akademis sekolah secara instan. Hasil berkas ini merupakan salinan berrevolusi tinggi yang bisa Anda pulihkan di perangkat mana pun kapan saja.
+                </p>
+              </div>
+
+              {/* Action Buttons Grid */}
+              <div className="space-y-4 pt-1">
+                {/* Download Backup */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      const dbPayload = {
+                        kelas,
+                        mapel,
+                        siswa,
+                        kategori,
+                        penilaian,
+                        guru: guruCodes,
+                        jadwal,
+                        tugas,
+                        absenSiswa,
+                        absenGuru,
+                        announcements,
+                        ujianPraktek,
+                        pengumpulanTugas,
+                        guruPiket,
+                        agendas
+                      };
+                      const blob = new Blob([JSON.stringify(dbPayload, null, 2)], { type: "application/json" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `database_siswadigital_alhanif_${new Date().toISOString().split("T")[0]}.json`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      setSheetStatus("Sistem: Salinan lengkap database sekolah (.json) berhasil diunduh ke penyimpanan lokal komputer Anda.");
+                    } catch (err: any) {
+                      setSheetError("Ekspor JSON Gagal: " + err.message);
+                    }
+                  }}
+                  className="w-full py-3 bg-[#8BA888] hover:bg-[#718F6E] text-white rounded-xl text-xs font-bold font-sans transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-500/10"
+                >
+                  <CloudUpload className="w-4.5 h-4.5 animate-bounce" />
+                  <span>Cadangkan Seluruh Database (.json)</span>
+                </button>
+
+                {/* Upload / Restore Backup */}
+                <div className="relative">
+                  <label className="w-full py-3 bg-white border border-slate-205 hover:bg-slate-55 text-slate-700 rounded-xl text-xs font-bold font-sans transition-all flex items-center justify-center gap-2 cursor-pointer text-center">
+                    <CloudDownload className="w-4.5 h-4.5 text-[#8BA888]" />
+                    <span>Pulihkan Database dari File (.json)</span>
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          try {
+                            const raw = event.target?.result;
+                            if (typeof raw !== "string") return;
+                            const data = JSON.parse(raw);
+                            
+                            let count = 0;
+                            if (data.penilaian) {
+                              data.penilaian.forEach((p: any) => {
+                                count += (p.grades || []).length;
+                              });
+                            }
+
+                            setParsedData({
+                              kelas: data.kelas || [],
+                              mapel: data.mapel || [],
+                              siswa: data.siswa || [],
+                              kategori: data.kategori || [],
+                              penilaian: data.penilaian || [],
+                              guru: data.guru || [],
+                              jadwal: data.jadwal || [],
+                              tugas: data.tugas || [],
+                              absenSiswa: data.absenSiswa || [],
+                              absenGuru: data.absenGuru || [],
+                              announcements: data.announcements || [],
+                              ujianPraktek: data.ujianPraktek || [],
+                              pengumpulanTugas: data.pengumpulanTugas || [],
+                              guruPiket: data.guruPiket || [],
+                              agendas: data.agendas || [],
+                              totalGradesCount: count
+                            });
+                            setImportMode("replace");
+                            setSheetStatus("Sistem: Database format JSON berhasil dibaca! Klik tombol 'Simpan Semua Data ke Sistem' di bawah untuk menerapkan.");
+                            setSheetError(null);
+                          } catch (err: any) {
+                            setSheetError("Berkas JSON rusak atau format salah: " + err.message);
+                          }
+                        };
+                        reader.readAsText(file);
+                        e.target.value = ""; // Reset value so the event fires again on same file
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                {/* Reset Database Button with Confirmation */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstConfirm = window.confirm("PERINGATAN: Apakah Anda yakin ingin mengosongkan database sekolah lokal saat ini?");
+                    if (!firstConfirm) return;
+                    const secondConfirm = window.confirm("TINDAKAN INI TIDAK BISA DIBATALKAN. Semua daftar siswa, nilai, kelas, dan ustadz yang Anda buat akan direset ke keadaan awal SDIT Al-Hanif. Lanjutkan?");
+                    if (!secondConfirm) return;
+
+                    localStorage.clear();
+                    window.location.reload();
+                  }}
+                  className="w-full py-2.5 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-rose-200/50"
+                >
+                  <Activity className="w-4 h-4 shrink-0 animate-spin" />
+                  <span>Kosongkan & Reset ke Data Default</span>
+                </button>
+              </div>
+
+              {/* Status and Feedback Messages */}
+              {sheetStatus && (
+                <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-100 text-[11px] leading-relaxed font-semibold animate-fadeIn">
+                  {sheetStatus}
+                </div>
+              )}
+              {sheetError && (
+                <div className="p-3 bg-rose-50 text-rose-800 rounded-xl border border-rose-100 text-[11px] leading-relaxed font-semibold animate-fadeIn">
+                  {sheetError}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {false && (userRole === "admin" || userRole === "guru") && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fadeIn">
           {/* Decoupling / Connection Switcher - Full Width Span */}
           <div className="lg:col-span-12">
@@ -1132,7 +1354,7 @@ export default function ExcelIntegration({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Card 1: Cloud Firestore Murni */}
                 <button
                   type="button"
@@ -1159,7 +1381,7 @@ export default function ExcelIntegration({
                     </div>
                     <div>
                       <h4 className="font-extrabold text-slate-800 text-sm">Mode Cloud Firestore Murni</h4>
-                      <p className="text-[11px] text-slate-505 mt-1.5 leading-relaxed font-sans">
+                      <p className="text-[11px] text-slate-550 mt-1.5 leading-relaxed font-sans">
                         Database sekolah disimpan langsung ke Cloud Firestore. Sangat cepat, instan, bebas dari segala kendala izin (Permission Denied) ataupun Google Drive penuh. Sempurna untuk kelancaran mengajar guru.
                       </p>
                     </div>
@@ -1198,7 +1420,7 @@ export default function ExcelIntegration({
                     </div>
                     <div>
                       <h4 className="font-extrabold text-slate-800 text-sm">Mode Supabase PostgreSQL</h4>
-                      <p className="text-[11px] text-slate-505 mt-1.5 leading-relaxed font-sans">
+                      <p className="text-[11px] text-slate-550 mt-1.5 leading-relaxed font-sans">
                         Penyimpanan cloud dialihkan ke database cloud PostgreSQL Supabase Anda. Meningkatkan kedaulatan data penuh, keamanan enkripsi andal, dan andal tanpa sheets.
                       </p>
                     </div>
@@ -1207,42 +1429,6 @@ export default function ExcelIntegration({
                     <span>Opsi Koneksi: Supabase Cloud</span>
                     <span className={`w-5 h-5 rounded-full flex items-center justify-center ${(isDecoupledFromSheets && dbProvider === "supabase") ? "bg-[#8BA888] text-white" : "border-2 border-slate-300 bg-white"}`}>
                       {(isDecoupledFromSheets && dbProvider === "supabase") && "✓"}
-                    </span>
-                  </div>
-                </button>
-
-                {/* Card 3: Google Sheets */}
-                <button
-                  type="button"
-                  onClick={() => setIsDecoupledFromSheets?.(false)}
-                  className={`p-5 rounded-2xl text-left border transition-all duration-300 relative flex flex-col justify-between h-full hover:shadow-md cursor-pointer ${
-                    !isDecoupledFromSheets
-                      ? "bg-white border-[#8BA888] ring-2 ring-[#8BA888]/10 shadow-xs"
-                      : "bg-white/50 border-slate-200 hover:bg-white"
-                  }`}
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className={`p-2.5 rounded-xl ${!isDecoupledFromSheets ? "bg-[#8BA888]/10 text-[#577354]" : "bg-slate-100 text-slate-505"}`}>
-                        <FileSpreadsheet className="w-5 h-5" />
-                      </div>
-                      {!isDecoupledFromSheets && (
-                        <span className="bg-blue-100 text-blue-800 text-[9px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
-                          Terhubung Spreadsheet
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <h4 className="font-extrabold text-slate-800 text-sm">Mode Google Sheets & Excel Sync</h4>
-                      <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed font-sans">
-                        Data disinkronkan secara simultan ke Google Sheets online Anda. Memungkinkan analisis manual langsung lewat file spreadsheet cloud. Diperlukan ijin akses sunting.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full text-xs font-bold text-slate-600">
-                    <span>Opsi Koneksi: Spreadsheet Link</span>
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center ${!isDecoupledFromSheets ? "bg-[#8BA888] text-white" : "border-2 border-slate-300 bg-white"}`}>
-                      {!isDecoupledFromSheets && "✓"}
                     </span>
                   </div>
                 </button>
@@ -1594,7 +1780,133 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
                 </p>
               </div>
 
-              {!googleUser ? (
+              {isDecoupledFromSheets ? (
+                // Directly render cloud database sync controls and bypass/remove googleUser checks
+                <div className="space-y-6 animate-fadeIn">
+                  <div className="flex items-center justify-between bg-slate-50 border border-slate-100 p-4 rounded-2xl animate-fadeIn">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-[#8BA888]/10 text-[#577354] flex items-center justify-center font-bold text-sm">
+                        CD
+                      </div>
+                      <div>
+                        <div className="font-bold text-sm text-slate-800">
+                          {dbProvider === "supabase" ? "Koneksi Supabase PostgreSQL" : "Koneksi Cloud Firestore"}
+                        </div>
+                        <div className="text-[10px] font-mono text-emerald-600 font-bold uppercase tracking-wider flex items-center gap-1.5 align-middle">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse relative top-[1px]" />
+                          Status: Aktif & Terhubung
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Operational Sync Console */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Exporter / Push */}
+                    <button
+                      onClick={dbProvider === "supabase" ? handlePushToSupabase : handlePushToFirestore}
+                      disabled={isSyncingIn || isSyncingOut}
+                      type="button"
+                      className="flex flex-col items-center justify-center p-6 bg-emerald-50/50 border border-emerald-100/75 hover:border-emerald-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
+                    >
+                      <div className="w-12 h-12 bg-white text-emerald-600 rounded-full flex items-center justify-center shadow-xs border border-emerald-50">
+                        {isSyncingOut ? (
+                          <RefreshCw className="w-6 h-6 animate-spin" />
+                        ) : (
+                          <CloudUpload className="w-6 h-6" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-800 text-sm">
+                          {dbProvider === "supabase" ? "Cadangkan ke Supabase" : "Cadangkan ke Firestore"}
+                        </div>
+                        <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
+                          {dbProvider === "supabase" ? "Mengamankan seluruh data sekolah ke PostgreSQL Supabase kustom." : "Mengamankan seluruh data sekolah ke database cloud instan."}
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Importer / Pull */}
+                    <button
+                      onClick={dbProvider === "supabase" ? handlePullFromSupabase : handlePullFromFirestore}
+                      disabled={isSyncingIn || isSyncingOut}
+                      type="button"
+                      className="flex flex-col items-center justify-center p-6 bg-blue-50/50 border border-blue-100 hover:border-blue-300 rounded-2xl text-center space-y-3 cursor-pointer transition-all hover:shadow-xs hover:-translate-y-0.5 disabled:opacity-50"
+                    >
+                      <div className="w-12 h-12 bg-white text-blue-600 rounded-full flex items-center justify-center shadow-xs border border-blue-50">
+                        {isSyncingIn ? (
+                          <RefreshCw className="w-6 h-6 animate-spin" />
+                        ) : (
+                          <CloudDownload className="w-6 h-6" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-800 text-sm">
+                          {dbProvider === "supabase" ? "Muat dari Supabase" : "Muat dari Firestore"}
+                        </div>
+                        <div className="text-[10px] text-slate-450 mt-1 font-semibold leading-relaxed">
+                          {dbProvider === "supabase" ? "Memulihkan data sekolah dari database PostgreSQL Supabase Anda." : "Memulihkan data sekolah dari cadangan awan Firestore Anda."}
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Auto Sync Toggle switch */}
+                  {setIsAutoSyncEnabled && (
+                    <div className="flex items-center justify-between bg-emerald-50/30 border border-emerald-100/50 p-4 rounded-2xl animate-fadeIn">
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-slate-800 text-xs">Penyelaras Database Otomatis</div>
+                        <div className="text-[10px] text-slate-450 leading-tight">Secara otomatis mengunggah setiap pembaruan guru langsung ke database cloud yang terpilih secara real-time.</div>
+                      </div>
+                      <button
+                        onClick={() => setIsAutoSyncEnabled(!isAutoSyncEnabled)}
+                        type="button"
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          isAutoSyncEnabled ? "bg-[#8BA888]" : "bg-slate-200"
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            isAutoSyncEnabled ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Interactive Session Sync Logger Console */}
+                  <div className="bg-slate-900 rounded-2xl p-4 text-slate-300 space-y-3 border border-slate-800 shadow-xl overflow-hidden relative">
+                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-450 tracking-wider uppercase border-b border-white/5 pb-2">
+                      <span className="flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                        Log Riwayat Sinkronisasi Sinkron-Siklik
+                      </span>
+                      <span className="font-mono text-[9px] bg-white/10 px-1.5 py-0.5 rounded-xs text-emerald-400 animate-pulse">ACTIVE</span>
+                    </div>
+
+                    <div className="space-y-2 font-mono text-[9px] max-h-36 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent leading-relaxed text-slate-300 select-all">
+                      {backupLogs.map(log => (
+                        <div key={log.id} className="flex items-start gap-1.5">
+                          <span className="text-slate-500 shrink-0">[{log.time}]</span>
+                          <span className={
+                            log.type === "success" 
+                              ? "text-[#8BA888] font-bold" 
+                              : log.type === "warning" 
+                                ? "text-rose-400 font-bold" 
+                                : "text-slate-300"
+                          }>
+                            {log.message}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="text-[8px] text-slate-550 text-center pt-1 border-t border-white/5 leading-normal">
+                      Sistem Penyelaras Cloud Al-Hanif aktif terus-menerus. Setiap entri data otomatis tersalin aman.
+                    </div>
+                  </div>
+                </div>
+              ) : !googleUser ? (
                 // Unauthenticated block
                 <div className="py-6 flex flex-col items-center text-center space-y-4">
                   <div className="w-16 h-16 rounded-3xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400">

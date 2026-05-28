@@ -35,9 +35,23 @@ export interface FirestoreErrorInfo {
   }
 }
 
+export let isFirestoreQuotaExceeded = false;
+export function setFirestoreQuotaExceeded(val: boolean) {
+  isFirestoreQuotaExceeded = val;
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  if (
+    errMsg.toLowerCase().includes("quota") ||
+    errMsg.toLowerCase().includes("resource-exhausted") ||
+    errMsg.toLowerCase().includes("limit exceeded") ||
+    errMsg.toLowerCase().includes("exhausted")
+  ) {
+    isFirestoreQuotaExceeded = true;
+  }
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -230,6 +244,15 @@ export const logout = async () => {
 // target Google Spreadsheet ID
 export let SPREADSHEET_ID = localStorage.getItem("PSD_SPREADSHEET_ID") || "1fKIvJVpQ1XxTbj-eNTayRBbvMiHOYstrf3N3Lm18KcI";
 
+export function isSpreadsheetIdValid(id: string | null | undefined): boolean {
+  if (!id) return false;
+  const trimmed = id.trim();
+  if (trimmed === "" || trimmed === "null" || trimmed === "undefined") return false;
+  if (trimmed.length < 20) return false;
+  if (trimmed.includes("/") || trimmed.includes(":") || trimmed.includes(" ") || trimmed.includes("!")) return false;
+  return true;
+}
+
 export function extractSpreadsheetId(input: string): string {
   if (!input) return "";
   const match = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -298,6 +321,9 @@ export async function createGoogleSpreadsheet(accessToken: string, title: string
 }
 
 export async function ensureSpreadsheetTabs(accessToken: string): Promise<string[]> {
+  if (!isSpreadsheetIdValid(SPREADSHEET_ID)) {
+    throw new Error("Spreadsheet ID tidak valid atau belum dikonfigurasi.");
+  }
   try {
     // 1. Fetch current sheets metadata
     const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
@@ -555,9 +581,10 @@ export async function exportLocalDataToGoogleSheets(
   // Perform a clean state by clearing and updating all tabs
   for (const sheet of REQUIRED_SHEETS) {
     const range = `${sheet.title}!A1:Z20000`;
+    const encodedRange = encodeURIComponent(range);
     
     // Clear old data
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}:clear`;
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodedRange}:clear`;
     await fetch(clearUrl, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}` }
@@ -568,7 +595,8 @@ export async function exportLocalDataToGoogleSheets(
     const bodyValues = [sheet.headers, ...dataRows];
 
     // Put new data
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheet.title}!A1?valueInputOption=USER_ENTERED`;
+    const encodedUpdateRange = encodeURIComponent(`${sheet.title}!A1`);
+    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodedUpdateRange}?valueInputOption=USER_ENTERED`;
     const resp = await fetch(updateUrl, {
       method: "PUT",
       headers: {
@@ -615,7 +643,8 @@ export async function importDataFromGoogleSheets(
 
   const fetchValues = async (sheetTitle: string): Promise<any[][]> => {
     const range = `${sheetTitle}!A1:Z10000`;
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}`;
+    const encodedRange = encodeURIComponent(range);
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodedRange}`;
     const resp = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });

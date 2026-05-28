@@ -42,7 +42,9 @@ import {
   syncAcademicDataToFirestore,
   createGoogleSpreadsheet,
   emailAndPasswordSignIn,
-  emailAndPasswordSignUp
+  emailAndPasswordSignUp,
+  isFirestoreQuotaExceeded,
+  setFirestoreQuotaExceeded
 } from "./lib/googleSheets";
 import {
   syncAcademicDataToSupabase,
@@ -1253,14 +1255,13 @@ export default function App() {
   const [gsLaunchSyncError, setGsLaunchSyncError] = useState<string | null>(null);
   const [gsLaunchSyncSuccess, setGsLaunchSyncSuccess] = useState<boolean>(false);
   const [hasLoadedCloudData, setHasLoadedCloudData] = useState<boolean>(false);
+  const [quotaExceeded, setQuotaExceeded] = useState<boolean>(false);
 
-  // Decoupled from Google Sheets mode (defaulting to true)
-  const [isDecoupledFromSheets, setIsDecoupledFromSheets] = useState(() => {
-    return localStorage.getItem("PSD_DECOUPLE_FROM_SHEETS") !== "false";
-  });
+  // Decoupled from Google Sheets mode (always true to remove Google Sheets dependency)
+  const [isDecoupledFromSheets, setIsDecoupledFromSheets] = useState(true);
 
   const [dbProvider, setDbProvider] = useState(() => {
-    return localStorage.getItem("PSD_DB_PROVIDER") || "firestore";
+    return localStorage.getItem("PSD_DB_PROVIDER") || (isSupabaseConfigured() ? "supabase" : "firestore");
   });
 
   useEffect(() => {
@@ -1333,92 +1334,19 @@ export default function App() {
           }
         }
 
-        setIsGSheetsSyncingOnLaunch(!isDecoupledFromSheets);
+        setIsGSheetsSyncingOnLaunch(false);
         setGsLaunchSyncError(null);
         try {
           let cloudState = null;
-          let data = null;
 
-          if (isDecoupledFromSheets) {
-            // Firestore-only or Supabase mode
-            if (dbProvider === "supabase" && isSupabaseConfigured()) {
-              cloudState = await fetchAcademicDataFromSupabase(user.uid);
-            } else {
-              cloudState = await fetchAcademicDataFromFirestore(user.uid);
-            }
+          // Always use Cloud Database sync (Firestore or Supabase) to prevent any Google Sheets errors
+          if (dbProvider === "supabase" && isSupabaseConfigured()) {
+            cloudState = await fetchAcademicDataFromSupabase(user.uid);
           } else {
-            // 1. Fetch custom Spreadsheet ID from Firestore or Supabase for cross-device sync!
-            let cloudSheetId = null;
-            if (dbProvider === "supabase" && isSupabaseConfigured()) {
-              cloudSheetId = await fetchUserSpreadsheetIdFromSupabase(user.uid);
-            } else {
-              cloudSheetId = await fetchUserSpreadsheetId(user.uid);
-            }
-
-            if (cloudSheetId) {
-              setSpreadsheetId(cloudSheetId);
-            } else if (SPREADSHEET_ID) {
-              // Backup the current local spreadsheet id to cloud if not already synced
-              if (dbProvider === "supabase" && isSupabaseConfigured()) {
-                await syncUserSpreadsheetIdToSupabase(user.uid, user.email || "", SPREADSHEET_ID);
-              } else {
-                await syncUserSpreadsheetId(user.uid, user.email || "", SPREADSHEET_ID);
-              }
-            }
-
-            // 2. Fetch Academic State backup from Google Cloud Firestore
             cloudState = await fetchAcademicDataFromFirestore(user.uid);
-
-            // 3. Auto-pull/sync upon launch/refresh from Google Sheets
-            try {
-              data = await importDataFromGoogleSheets(token);
-            } catch (sheetsErr: any) {
-              console.warn("Gagal mengimpor data secara langsung dari Google Sheets, beralih ke cadangan Firestore...", sheetsErr);
-              const errMsg = String(sheetsErr.message || "");
-              if (errMsg.includes("403") || errMsg.includes("Gagal") || !cloudSheetId) {
-                console.log("Mendeteksi galat akses atau pengguna baru. Membuat spreadsheet pribadi berjalan otomatis...");
-                try {
-                  const autoSheetId = await createGoogleSpreadsheet(token, `SiswaDigital_SDIT_AlHanif_Database`);
-                  if (autoSheetId) {
-                    setSpreadsheetId(autoSheetId);
-                    if (dbProvider === "supabase" && isSupabaseConfigured()) {
-                      await syncUserSpreadsheetIdToSupabase(user.uid, user.email || "", autoSheetId);
-                    } else {
-                      await syncUserSpreadsheetId(user.uid, user.email || "", autoSheetId);
-                    }
-                    // Push current cloudState or default empty structure to the newly created spreadsheet
-                    const fallbackData = cloudState || {
-                      kelas, mapel, siswa, kategori, penilaian,
-                      guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
-                      announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
-                    };
-                    await exportLocalDataToGoogleSheets(token, {
-                      kelas: fallbackData.kelas || [],
-                      mapel: fallbackData.mapel || [],
-                      siswa: fallbackData.siswa || [],
-                      kategori: fallbackData.kategori || [],
-                      penilaian: fallbackData.penilaian || [],
-                      guru: fallbackData.guru || fallbackData.guruCodes || [],
-                      jadwal: fallbackData.jadwal || [],
-                      tugas: fallbackData.tugas || [],
-                      absenSiswa: fallbackData.absenSiswa || [],
-                      absenGuru: fallbackData.absenGuru || [],
-                      announcements: fallbackData.announcements || [],
-                      ujianPraktek: fallbackData.ujianPraktek || [],
-                      pengumpulanTugas: fallbackData.pengumpulanTugas || [],
-                      guruPiket: fallbackData.guruPiket || [],
-                      agendas: fallbackData.agendas || []
-                    });
-                    data = await importDataFromGoogleSheets(token);
-                  }
-                } catch (createErr) {
-                  console.error("Gagal asisten cerdas pembuatan otomatis spreadsheet Google Anda:", createErr);
-                }
-              }
-            }
           }
 
-          const finalData = data || cloudState;
+          const finalData = cloudState;
 
           if (finalData) {
             if (finalData.kelas) setKelas(finalData.kelas);
@@ -1442,9 +1370,11 @@ export default function App() {
 
             setGsLaunchSyncSuccess(true);
             setHasLoadedCloudData(true);
+            setQuotaExceeded(false);
+            setFirestoreQuotaExceeded(false);
           } else {
             console.log("Pengguna baru terdeteksi dengan state kosong, menyimpan data lokal saat ini ke Cloud.");
-            if (isDecoupledFromSheets && dbProvider === "supabase" && isSupabaseConfigured()) {
+            if (dbProvider === "supabase" && isSupabaseConfigured()) {
               await syncAcademicDataToSupabase(user.uid, {
                 kelas, mapel, siswa, kategori, penilaian,
                 guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru,
@@ -1459,10 +1389,18 @@ export default function App() {
             }
             setGsLaunchSyncSuccess(true);
             setHasLoadedCloudData(true);
+            setQuotaExceeded(false);
+            setFirestoreQuotaExceeded(false);
           }
         } catch (err: any) {
-          console.error("Auto-sync dengan Google Sheets Gagal:", err);
-          setGsLaunchSyncError(err.message || "Gagal menghubungi Spreadsheet");
+          console.error("Auto-sync dengan Database Cloud Gagal:", err);
+          const rawErr = String(err.message || "");
+          if (rawErr.toLowerCase().includes("quota") || rawErr.toLowerCase().includes("resource-exhausted") || rawErr.toLowerCase().includes("limit exceeded") || isFirestoreQuotaExceeded) {
+            setQuotaExceeded(true);
+            setGsLaunchSyncError("Quota Database Cloud Firestore Terlampaui (Free tier database quota exceeded). Hubungi dewan admin atau beralih ke Database Supabase.");
+          } else {
+            setGsLaunchSyncError(err.message || "Gagal menghubungkan ke Database Cloud");
+          }
         } finally {
           setIsGSheetsSyncingOnLaunch(false);
         }
@@ -1631,70 +1569,72 @@ export default function App() {
     }
   }, [isGSheetsSyncingOnLaunch]);
 
-  // Real-time automatic background synchronization to Google Sheets and Cloud Firestore
+  // Keep track of the active data signature in state to prevent unnecessary background updates
+  const getDatabaseSerialized = () => {
+    try {
+      return JSON.stringify({
+        kelas,
+        mapel,
+        siswa,
+        kategori,
+        penilaian,
+        guru: guruCodes,
+        jadwal,
+        tugas,
+        absenSiswa,
+        absenGuru,
+        announcements,
+        ujianPraktek,
+        pengumpulanTugas,
+        guruPiket,
+        agendas
+      });
+    } catch (e) {
+      return "";
+    }
+  };
+
+  const [serializedDataSignature, setSerializedDataSignature] = useState(getDatabaseSerialized);
+
+  // Update signature after rendering if needed
+  useEffect(() => {
+    const serialized = getDatabaseSerialized();
+    if (serialized !== serializedDataSignature) {
+      setSerializedDataSignature(serialized);
+    }
+  }, [
+    kelas,
+    mapel,
+    siswa,
+    kategori,
+    penilaian,
+    guruCodes,
+    jadwal,
+    tugas,
+    absenSiswa,
+    absenGuru,
+    announcements,
+    ujianPraktek,
+    pengumpulanTugas,
+    guruPiket,
+    agendas
+  ]);
+
+  // Real-time automatic background synchronization to Cloud Database (Firestore or Supabase)
   useEffect(() => {
     if (!hasFinishedInitialPull) return;
     if (!googleUser) return;
     if (!hasLoadedCloudData) return; // STRICT GUARD: prevents overwriting existing data with empty states on device switch!
     if (!isAutoSyncEnabled) return;
+    if (dbProvider === "firestore" && quotaExceeded) return; // Bypass sync if firestore quota is exceeded
 
     setCloudSyncStatus("saving");
     setCloudSyncError(null);
 
     const timer = setTimeout(async () => {
       try {
-        // 1. Sync to Google Sheets if access token is available and NOT decoupled from Sheets
-        if (googleAccessToken && !isDecoupledFromSheets) {
-          try {
-            await exportLocalDataToGoogleSheets(googleAccessToken, {
-              kelas,
-              mapel,
-              siswa,
-              kategori,
-              penilaian,
-              guru: guruCodes,
-              jadwal,
-              tugas,
-              absenSiswa,
-              absenGuru,
-              announcements,
-              ujianPraktek,
-              pengumpulanTugas,
-              guruPiket,
-              agendas
-            });
-          } catch (sheetsErr: any) {
-            console.error("Auto-sync background ke Google Sheets gagal, beralih ke cadangan Firestore:", sheetsErr);
-            const errMsg = String(sheetsErr.message || "");
-            if (errMsg.includes("403")) {
-              const cloudSheetId = (dbProvider === "supabase" && isSupabaseConfigured())
-                ? await fetchUserSpreadsheetIdFromSupabase(googleUser.uid)
-                : await fetchUserSpreadsheetId(googleUser.uid);
-              if (!cloudSheetId || SPREADSHEET_ID === "1fKIvJVpQ1XxTbj-eNTayRBbvMiHOYstrf3N3Lm18KcI") {
-                console.log("Membuat spreadsheet pribadi otomatis dari background sync...");
-                try {
-                  const autoSheetId = await createGoogleSpreadsheet(googleAccessToken, `SiswaDigital_SDIT_AlHanif_Database`);
-                  if (autoSheetId) {
-                    setSpreadsheetId(autoSheetId);
-                    if (dbProvider === "supabase" && isSupabaseConfigured()) {
-                      await syncUserSpreadsheetIdToSupabase(googleUser.uid, googleUser.email || "", autoSheetId);
-                    } else {
-                      await syncUserSpreadsheetId(googleUser.uid, googleUser.email || "", autoSheetId);
-                    }
-                    await exportLocalDataToGoogleSheets(googleAccessToken, {
-                      kelas, mapel, siswa, kategori, penilaian, guru: guruCodes, jadwal, tugas, absenSiswa, absenGuru, announcements, ujianPraktek, pengumpulanTugas, guruPiket, agendas
-                    });
-                  }
-                } catch (createErr) {
-                  console.error("Gagal asisten otomatis pembuatan spreadsheet:", createErr);
-                }
-              }
-            }
-          }
-        }
-
-        // 2. Sync to Cloud Database (Firestore or Supabase)
-        if (isDecoupledFromSheets && dbProvider === "supabase" && isSupabaseConfigured()) {
+        // ALWAYS Sync direct to Cloud Database (Firestore or Supabase)
+        if (dbProvider === "supabase" && isSupabaseConfigured()) {
           await syncAcademicDataToSupabase(googleUser.uid, {
             kelas,
             mapel,
@@ -1734,38 +1674,32 @@ export default function App() {
 
         setCloudSyncStatus("saved");
         setCloudSyncError(null);
+        setQuotaExceeded(false);
+        setFirestoreQuotaExceeded(false);
         setTimeout(() => setCloudSyncStatus("idle"), 4000);
       } catch (err: any) {
         console.error("Auto-sync background gagal:", err);
         setCloudSyncStatus("error");
-        setCloudSyncError(err.message || "Koneksi Google/Firestore terputus atau API Key kustom Anda belum diselaraskan.");
+        
+        const rawErr = String(err.message || "");
+        if (rawErr.toLowerCase().includes("quota") || rawErr.toLowerCase().includes("resource-exhausted") || rawErr.toLowerCase().includes("limit exceeded") || isFirestoreQuotaExceeded) {
+          setQuotaExceeded(true);
+          setCloudSyncError("Database Firestore Limit Quota Tercapai (Resource Exhausted). Hubungi admin atau beralih ke Database Supabase.");
+        } else {
+          setCloudSyncError(err.message || "Koneksi Google/Firestore terputus atau API Key kustom Anda belum diselaraskan.");
+        }
       }
     }, 4005); // 4 seconds debounce to bundle edits together
 
     return () => clearTimeout(timer);
   }, [
-    kelas,
-    mapel,
-    siswa,
-    kategori,
-    penilaian,
-    guruCodes,
-    jadwal,
-    tugas,
-    absenSiswa,
-    absenGuru,
-    announcements,
-    ujianPraktek,
-    pengumpulanTugas,
-    guruPiket,
-    agendas,
+    serializedDataSignature,
     googleUser,
-    googleAccessToken,
     isAutoSyncEnabled,
-    isDecoupledFromSheets,
     dbProvider,
     hasFinishedInitialPull,
-    hasLoadedCloudData
+    hasLoadedCloudData,
+    quotaExceeded
   ]);
 
   // State to handle automatic timed-dismissal of welcome banners
@@ -2402,39 +2336,37 @@ export default function App() {
             <span className="hidden sm:inline">{isFullscreen ? "Layar Normal" : "Layar Penuh"}</span>
           </button>
           
-          {/* Connection Status Badge to Google Sheets */}
-          {googleAccessToken ? (
+          {/* Connection Status Badge to Cloud Database */}
+          {googleUser ? (
             <div 
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-sans text-[11px] font-black border ${
-                isGSheetsSyncingOnLaunch || cloudSyncStatus === "saving"
+                cloudSyncStatus === "saving"
                   ? "bg-amber-50 border-amber-200 text-amber-700 animate-pulse" 
                   : gsLaunchSyncError || cloudSyncStatus === "error"
-                    ? "bg-rose-50 border-rose-205 text-rose-700 animate-shake" 
+                    ? "bg-rose-50 border-rose-200 text-rose-700 animate-shake" 
                     : cloudSyncStatus === "saved"
                       ? "bg-teal-50 border-teal-200 text-teal-800"
-                      : "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      : "bg-emerald-50 border-emerald-200 text-[#4E624A]"
               }`}
               title={
-                isGSheetsSyncingOnLaunch || cloudSyncStatus === "saving"
-                  ? "Sedang menyinkronkan data Google Spreadsheet..." 
+                cloudSyncStatus === "saving"
+                  ? "Sedang menyinkronkan data ke Cloud Database..." 
                   : gsLaunchSyncError || cloudSyncStatus === "error"
                     ? `Gagal Sinkronisasi: ${gsLaunchSyncError || cloudSyncError}` 
-                    : "Terkoneksi Sempurna dengan Google Spreadsheet"
+                    : `Terkoneksi Sempurna dengan Database Cloud ${dbProvider === "supabase" ? "Supabase PostgreSQL" : "Google Firestore"}`
               }
             >
-              <div className={`w-2 h-2 rounded-full ${isGSheetsSyncingOnLaunch || cloudSyncStatus === "saving" ? 'bg-amber-400 animate-ping' : gsLaunchSyncError || cloudSyncStatus === "error" ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+              <div className={`w-2 h-2 rounded-full ${cloudSyncStatus === "saving" ? 'bg-amber-400 animate-ping' : gsLaunchSyncError || cloudSyncStatus === "error" ? 'bg-rose-500' : 'bg-emerald-550'}`} />
               <span className="hidden sm:inline">
-                {isGSheetsSyncingOnLaunch 
-                  ? "Menyinkronkan..." 
-                  : cloudSyncStatus === "saving"
-                    ? "Menyimpan ke Awan..."
-                    : cloudSyncStatus === "saved"
-                      ? "Tersimpan Online"
-                      : gsLaunchSyncError 
-                        ? "GSheets Error" 
-                        : "Cloud Sinkron: Aktif"}
+                {cloudSyncStatus === "saving"
+                  ? "Menyimpan ke Awan..."
+                  : cloudSyncStatus === "saved"
+                    ? "Tersimpan Online"
+                    : gsLaunchSyncError || cloudSyncStatus === "error"
+                      ? "Cloud Error" 
+                      : `Cloud Sinkron: Aktif (${dbProvider === "supabase" ? "Supabase" : "Firestore"})`}
               </span>
-              <span className="sm:hidden font-extrabold">Spreadsheet: OK</span>
+              <span className="sm:hidden font-extrabold">{dbProvider === "supabase" ? "Supabase: OK" : "Firestore: OK"}</span>
             </div>
           ) : null}
 
@@ -2564,6 +2496,49 @@ export default function App() {
           ) : null}
         </div>
       </header>
+
+      {/* PERSISTENT FIRESTORE QUOTA EXCEEDED ALARM BANNER (Aesthetic & Actionable) */}
+      {quotaExceeded && dbProvider === "firestore" && (
+        <div className="bg-rose-600 text-white shadow-lg animate-fadeIn border-b border-rose-700 select-none z-45 no-print relative">
+          <div className="max-w-7xl mx-auto px-4 py-3 md:px-8 flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="p-1 px-2 bg-white/20 rounded-md font-mono text-[9px] font-bold shrink-0">LIMIT REACHED</span>
+              <p className="font-medium">
+                <strong>Batas Kuota Database Firestore Tercapai:</strong> Operasi baca/tulis harian database Anda telah habis. Anda tidak dapat menyimpan revisi baru ke Firestore hari ini. Solusi: beralih ke <strong>Supabase</strong> atau simpan data ke <strong>Excel</strong>.
+              </p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button 
+                onClick={() => {
+                  setDbProvider("supabase");
+                  setQuotaExceeded(false);
+                  setFirestoreQuotaExceeded(false);
+                  showToast("Berhasil dialihkan ke Supabase! Silakan menyinkronkan data di menu Cloud Sync.", "success");
+                }}
+                className="bg-white text-rose-700 hover:bg-rose-50 font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-all cursor-pointer shadow-xs whitespace-nowrap"
+              >
+                Ganti ke Supabase
+              </button>
+              <button 
+                onClick={() => {
+                  setActiveTab("excel");
+                  showToast("Membuka halaman Ekspor/Impor data Excel.", "neutral");
+                }}
+                className="bg-white/10 hover:bg-white/25 text-white font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-all cursor-pointer whitespace-nowrap border border-white/20"
+              >
+                Ekspor data Excel
+              </button>
+              <button
+                onClick={() => setQuotaExceeded(false)}
+                className="hover:bg-white/10 text-white font-bold p-1 px-2 rounded-lg active:scale-95 transition-all cursor-pointer shrink-0"
+                title="Tutup banner ini sementara"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2. BODY FRAME: SIDE-DEPOT NAVIGATION & MAIN CANVAS */}
       <div className="flex-1 flex relative">
@@ -3478,8 +3453,8 @@ export default function App() {
           kategori={kategori}
           penilaian={penilaian}
           currentRole={userRole}
-          teacherName={userRole === "admin" ? "KOMUNITAS MGMP SDIT AL HANIF" : userRole === "wali" ? "Orang Tua / Wali Murid" : activeGuruProfile?.namaGuru}
-          teacherCode={userRole === "admin" ? "MASTER-ADMIN" : userRole === "wali" ? "WALI" : activeGuruProfile?.code}
+          teacherName={userRole === "admin" ? "KOMUNITAS MGMP SDIT AL HANIF" : activeGuruProfile?.namaGuru}
+          teacherCode={userRole === "admin" ? "MASTER-ADMIN" : activeGuruProfile?.code}
           onTabNavigate={(tab) => {
             const lowerTab = tab.toLowerCase().trim();
             if (lowerTab === "wali" || lowerTab === "parent" || lowerTab === "wali-murid" || lowerTab === "wali_murid") {

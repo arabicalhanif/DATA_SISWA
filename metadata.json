@@ -1,6 +1,6 @@
 {
-  "name": "Remix: Remix: Remix:Arabic alhanif ",
-  "description": "Sistem informasi penilaian siswa digital untuk memantau nilai akademik siswa secara real-time, lengkap dengan grafik interaktif dan ekspor laporan.",
+  "name": "SiswaDigital Portal Akademik SDIT Al-Hanif",
+  "description": "Sistem informasi akademik dan penilaian digital terintegrasi untuk SDIT Al-Hanif, memfasilitasi kolaborasi guru, pengawas, dan wali murid secara real-time.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

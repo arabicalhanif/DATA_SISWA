@@ -4852,7 +4852,11 @@ export default function AdminPortal({
                           );
                         })
                       )}
-                           {masterDataSubTab === "siswa" && (() => {
+                    </div>
+                  </div>
+                )}
+
+                {masterDataSubTab === "siswa" && (() => {
                     const activeSiswaFiltered = siswa.filter(s => studentFilter === "alumni" ? !!s.isAlumni : !s.isAlumni);
                     const searchedSiswa = activeSiswaFiltered.filter(s => {
                       if (!adminSiswaSearch.trim()) return true;
@@ -5026,9 +5030,7 @@ export default function AdminPortal({
                         )}
                       </div>
                     );
-                  })()}            </div>
-                  </div>
-                )}
+                  })()}
 
                 {masterDataSubTab === "kategori" && (
                   <div>
